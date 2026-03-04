@@ -1,0 +1,86 @@
+{
+  "projectType": "infrastructure",
+  "projectName": "ScaleTail",
+  "projectDescription": "A collection of Docker Compose configurations for running self-hosted services with Tailscale sidecar containers.",
+  "theme": "aspen",
+  "primaryColor": "#2BB673",
+  "lightColor": "#42D392",
+  "darkColor": "#1E8B56",
+  "navigation": {
+    "groups": [
+      {
+        "group": "Get Started",
+        "pages": [
+          "introduction",
+          "quickstart",
+          "concepts"
+        ]
+      },
+      {
+        "group": "Configuration",
+        "pages": [
+          "configuration/tailscale-setup",
+          "configuration/sidecar-pattern",
+          "configuration/serve-vs-funnel",
+          "configuration/environment-variables"
+        ]
+      },
+      {
+        "group": "Deployment",
+        "pages": [
+          "deployment/prerequisites",
+          "deployment/docker-compose",
+          "deployment/health-checks",
+          "deployment/troubleshooting"
+        ]
+      },
+      {
+        "group": "Services",
+        "pages": [
+          "services/overview",
+          "services/networking",
+          "services/media",
+          "services/productivity",
+          "services/development",
+          "services/monitoring",
+          "services/utilities"
+        ]
+      },
+      {
+        "group": "Advanced",
+        "pages": [
+          "advanced/exit-nodes",
+          "advanced/magicdns",
+          "advanced/custom-services",
+          "advanced/security-best-practices"
+        ]
+      },
+      {
+        "group": "Contributing",
+        "pages": [
+          "contributing/overview",
+          "contributing/service-template",
+          "contributing/documentation"
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "95+ pre-configured Docker Compose services with Tailscale sidecar",
+    "Secure zero-trust networking for self-hosted applications",
+    "Tailscale Serve and Funnel support for private and public exposure",
+    "Template-based service configuration for consistency",
+    "Health checks and dependency management",
+    "Support for media servers, development tools, monitoring, and more"
+  ],
+  "publicApiSurface": [
+    "Environment Variables: TS_AUTHKEY, TS_STATE_DIR, TS_SERVE_CONFIG, TS_USERSPACE",
+    "Environment Variables: TS_ENABLE_HEALTH_CHECK, TS_LOCAL_ADDR_PORT, TS_ACCEPT_DNS",
+    "Environment Variables: TS_AUTH_ONCE, TS_CERT_DOMAIN, TS_EXTRA_ARGS",
+    "Docker Compose Pattern: network_mode: service:tailscale",
+    "Docker Compose Pattern: depends_on with service_healthy condition",
+    "Tailscale Serve Config: TCP, Web, Handlers, Proxy, AllowFunnel",
+    "Health Check Endpoint: http://127.0.0.1:41234/healthz",
+    "Service Template: templates/service-template/compose.yaml"
+  ]
+}
