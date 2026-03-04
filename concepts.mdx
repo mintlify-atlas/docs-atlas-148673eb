@@ -108,7 +108,7 @@ tailscale:
   hostname: jellyfin  # Becomes: jellyfin.tail1234.ts.net
   environment:
     - TS_AUTHKEY=${TS_AUTHKEY}  # Authenticates to your Tailnet
-```
+```json
 
 The service appears as a device in your Tailnet, accessible at `https://jellyfin.tail1234.ts.net:443` from any device on the same Tailnet.
 
@@ -313,7 +313,7 @@ services:
     hostname: ${SERVICE}  # Becomes: jellyfin
     environment:
       - TS_AUTHKEY=${TS_AUTHKEY}
-```
+```json
 
 <Warning>
   Never commit `.env` files containing `TS_AUTHKEY` to version control. Add `.env` to your `.gitignore`.
