@@ -1,0 +1,204 @@
+---
+title: Service Template
+description: Using the service template to create new services
+---
+
+The service template provides a standardized structure for adding new services to ScaleTail. It ensures consistency across all service configurations and makes it easier for users to understand and customize.
+
+## Template structure
+
+The template is located at `templates/service-template/` and includes:
+
+- `compose.yaml` - Docker Compose configuration with Tailscale sidecar
+- `README.md` - Documentation template for the service
+- `.env` - Environment variables (not committed to git)
+
+## Naming conventions
+
+Follow these naming patterns consistently:
+
+<CodeGroup>
+```yaml Tailscale container
+tailscale:
+  container_name: tailscale-${SERVICE}
+  hostname: ${SERVICE}
+```
+
+```yaml Application container
+application:
+  container_name: app-${SERVICE}
+  network_mode: service:tailscale
+```
+</CodeGroup>
+
+<Info>
+  **Why these names?** The `tailscale-` and `app-` prefixes make it easy to identify container roles when running `docker ps` or debugging multi-service deployments.
+</Info>
+
+## Template walkthrough
+
+### Tailscale sidecar configuration
+
+The Tailscale container handles all networking:
+
+```yaml
+tailscale:
+  image: tailscale/tailscale:latest
+  container_name: tailscale-${SERVICE}
+  hostname: ${SERVICE}
+  environment:
+    - TS_AUTHKEY=${TS_AUTHKEY}
+    - TS_STATE_DIR=/var/lib/tailscale
+    - TS_SERVE_CONFIG=/config/serve.json
+    - TS_USERSPACE=false
+    - TS_ENABLE_HEALTH_CHECK=true
+    - TS_LOCAL_ADDR_PORT=127.0.0.1:41234
+    #- TS_ACCEPT_DNS=true # Uncomment when using MagicDNS
+    - TS_AUTH_ONCE=true
+  configs:
+    - source: ts-serve
+      target: /config/serve.json
+  volumes:
+    - ./config:/config
+    - ./ts/state:/var/lib/tailscale
+  devices:
+    - /dev/net/tun:/dev/net/tun
+  cap_add:
+    - net_admin
+  healthcheck:
+    test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:41234/healthz"]
+    interval: 1m
+    timeout: 10s
+    retries: 3
+    start_period: 10s
+  restart: always
+```
+
+### Serve configuration
+
+The template includes a pre-configured Tailscale Serve setup:
+
+```yaml
+configs:
+  ts-serve:
+    content: |
+      {"TCP":{"443":{"HTTPS":true}},
+      "Web":{"$${TS_CERT_DOMAIN}:443":
+          {"Handlers":{"/":
+          {"Proxy":"http://127.0.0.1:80"}}}},
+      "AllowFunnel":{"$${TS_CERT_DOMAIN}:443":false}}
+```
+
+<Warning>
+  Update `"Proxy":"http://127.0.0.1:80"` with your service's actual internal port. The serve configuration does not consume `.env` values automatically.
+</Warning>
+
+If Serve/Funnel is not needed, remove the `TS_SERVE_CONFIG` environment variable.
+
+### Application configuration
+
+The application container shares the Tailscale network:
+
+```yaml
+application:
+  image: ${IMAGE_URL}
+  network_mode: service:tailscale
+  container_name: app-${SERVICE}
+  environment:
+    - PUID=1000
+    - PGID=1000
+    - TZ=Europe/Amsterdam
+  volumes:
+    - ./${SERVICE}-data/app/config:/config
+  depends_on:
+    tailscale:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "pgrep", "-f", "${SERVICE}"]
+    interval: 1m
+    timeout: 10s
+    retries: 3
+    start_period: 30s
+  restart: always
+```
+
+### Port exposure
+
+By default, ports are commented to keep services Tailnet-only:
+
+```yaml
+#ports:
+#  - 0.0.0.0:${SERVICEPORT}:${SERVICEPORT}
+```
+
+<Info>
+  Only uncomment port mappings if LAN exposure is required, and document why in the README.
+</Info>
+
+## Testing your configuration
+
+Before committing, validate your stack:
+
+```bash
+cd services/<service-name>
+docker compose config
+```
+
+This command:
+- Parses your `compose.yaml` and `.env` files
+- Catches syntax errors and missing variables
+- Shows the final resolved configuration
+
+<Tip>
+  If `docker compose config` succeeds without errors, your configuration is syntactically valid.
+</Tip>
+
+## Environment variables
+
+The `.env` file contains sensitive values and service-specific configuration:
+
+```bash .env
+# Required
+TS_AUTHKEY=tskey-auth-xxx
+SERVICE=myservice
+IMAGE_URL=ghcr.io/maintainer/myservice:latest
+
+# Optional
+SERVICEPORT=8080
+TS_CERT_DOMAIN=myservice.tailnet-name.ts.net
+DNS_SERVER=1.1.1.1
+```
+
+<Warning>
+  Never commit `.env` files with real auth keys or secrets. Use placeholder values in documentation.
+</Warning>
+
+## Volume management
+
+Pre-create bind mount paths to prevent Docker from creating root-owned directories:
+
+```bash
+mkdir -p ./config
+mkdir -p ./ts/state
+mkdir -p ./${SERVICE}-data/app/config
+```
+
+<Info>
+  Some services expect specific config directory names. If conflicts arise (e.g., both Tailscale and the app need `./config`), rename one to `./ts-config` and update the compose file.
+</Info>
+
+## Device and capability requirements
+
+If your service needs special access, add it explicitly:
+
+```yaml
+devices:
+  - /dev/dri:/dev/dri        # GPU access
+  - /dev/net/tun:/dev/net/tun # Tailscale requirement
+
+cap_add:
+  - net_admin  # Tailscale requirement
+  - sys_admin  # If needed by service
+```
+
+Document all special requirements in the README's prerequisites section.

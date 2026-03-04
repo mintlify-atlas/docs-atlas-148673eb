@@ -1,0 +1,241 @@
+---
+title: Documentation Standards
+description: Guidelines for documenting ScaleTail services
+---
+
+Good documentation helps users understand how to deploy, configure, and troubleshoot services. Follow these standards when creating service READMEs.
+
+## README template structure
+
+Each service README should follow this structure:
+
+```markdown
+# SERVICE with Tailscale Sidecar Configuration
+
+This Docker Compose configuration sets up [SERVICE](LINK) with Tailscale 
+as a sidecar container to keep the app reachable over your Tailnet.
+
+## SERVICE
+
+[SERVICE](LINK) information about the service. Explain what the app does 
+in 2-3 sentences and why someone would pair it with Tailscale.
+
+## Configuration Overview
+
+In this setup, the `tailscale-SERVICE` service runs Tailscale, which manages 
+secure networking for SERVICE. The `SERVICE` service utilizes the Tailscale 
+network stack via Docker's `network_mode: service:` configuration. This keeps 
+the app Tailnet-only unless you intentionally expose ports.
+```
+
+## What to document
+
+### Prerequisites
+
+List all requirements before users attempt deployment:
+
+<AccordionGroup>
+  <Accordion title="User permissions">
+    Note if the host user needs `docker` group membership:
+    
+    ```bash
+    sudo usermod -aG docker $USER
+    ```
+  </Accordion>
+
+  <Accordion title="Hardware access">
+    Document GPU, video, render group requirements:
+    
+    ```yaml
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "989"  # render group
+    ```
+  </Accordion>
+
+  <Accordion title="System dependencies">
+    Any packages or kernel modules needed on the host.
+  </Accordion>
+</AccordionGroup>
+
+### Volumes
+
+Explain which bind mounts should be pre-created:
+
+```bash
+mkdir -p ./config
+mkdir -p ./ts/state
+mkdir -p ./${SERVICE}-data/app/config
+```
+
+<Warning>
+  If Docker creates these directories, they will be root-owned and may cause permission issues.
+</Warning>
+
+If config folder names conflict (e.g., both Tailscale and the app need `./config`):
+
+```yaml
+volumes:
+  - ./ts-config:/config  # Renamed to avoid conflict
+```
+
+### MagicDNS and Serve
+
+Document when to enable MagicDNS:
+
+```yaml
+environment:
+  - TS_ACCEPT_DNS=true  # Uncomment for MagicDNS
+```
+
+Explain what `TS_CERT_DOMAIN` should be set to:
+
+```bash .env
+TS_CERT_DOMAIN=myservice.tailnet-name.ts.net
+```
+
+<Info>
+  The serve configuration proxy port must match the service's internal port. Update `"Proxy":"http://127.0.0.1:80"` accordingly.
+</Info>
+
+If Serve/Funnel is not needed:
+
+```yaml
+environment:
+  # - TS_SERVE_CONFIG=/config/serve.json  # Removed
+```
+
+### Port exposure
+
+Explain whether the commented port mapping is necessary:
+
+<CodeGroup>
+```yaml Tailnet-only (recommended)
+# No ports section needed
+# Service accessible via Tailscale only
+```
+
+```yaml LAN exposure (when required)
+ports:
+  - 0.0.0.0:${SERVICEPORT}:${SERVICEPORT}
+```
+</CodeGroup>
+
+<Tip>
+  Most services should remain Tailnet-only. Only expose ports if the service requires direct LAN access (e.g., DLNA, casting, local device discovery).
+</Tip>
+
+### Service-specific gotchas
+
+Call out common issues:
+
+<CardGroup cols={2}>
+  <Card title="Initial setup" icon="gear">
+    Steps to complete after first launch (admin account creation, database initialization, etc.)
+  </Card>
+
+  <Card title="Default credentials" icon="key">
+    List any default usernames/passwords that should be changed
+  </Card>
+
+  <Card title="Path expectations" icon="folder">
+    Paths the service expects to exist or specific directory structures
+  </Card>
+
+  <Card title="Group IDs" icon="users">
+    Required PGID/GUID values for file access
+  </Card>
+</CardGroup>
+
+### Health checks
+
+Document what the health check validates:
+
+```yaml
+healthcheck:
+  test: ["CMD", "pgrep", "-f", "${SERVICE}"]
+  interval: 1m
+  timeout: 10s
+  retries: 3
+  start_period: 30s
+```
+
+If the default health check doesn't work, provide an alternative:
+
+```yaml
+healthcheck:
+  test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+```
+
+### Upstream documentation
+
+Always link to official resources:
+
+- Service homepage and documentation
+- Installation/setup guides
+- Official videos or tutorials
+- GitHub repository
+
+```markdown
+## Resources
+
+- [Official Documentation](https://service.example.com/docs)
+- [Setup Guide](https://service.example.com/setup)
+- [GitHub Repository](https://github.com/maintainer/service)
+```
+
+## Files to check section
+
+Remind users to verify configuration:
+
+```markdown
+## Files to check
+
+Please check the following contents for validity as some variables 
+need to be defined upfront.
+
+- `.env` // Main variable `TS_AUTHKEY`
+```
+
+## Writing style
+
+<AccordionGroup>
+  <Accordion title="Be concise">
+    Users want to deploy quickly. Keep explanations brief and actionable.
+  </Accordion>
+
+  <Accordion title="Be specific">
+    Don't say "configure the port" - say "update line 7 to use port 8080".
+  </Accordion>
+
+  <Accordion title="Anticipate questions">
+    If you struggled with something during setup, document it. Others will too.
+  </Accordion>
+
+  <Accordion title="Use examples">
+    Show real configuration snippets, not abstract descriptions.
+  </Accordion>
+</AccordionGroup>
+
+## Testing documentation
+
+Before submitting:
+
+1. Follow your own README from a fresh clone
+2. Verify all links work
+3. Test the `docker compose config` validation
+4. Confirm the service starts and is accessible via Tailscale
+
+<Check>
+  If someone unfamiliar with the service can deploy it using only your README, you've succeeded.
+</Check>
+
+## Example documentation
+
+See existing services in the `services/` directory for examples of well-documented configurations. Pay attention to:
+
+- How prerequisites are explained
+- When and why ports are exposed
+- How gotchas are called out
+- The level of detail in configuration notes

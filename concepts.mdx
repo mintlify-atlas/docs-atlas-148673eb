@@ -1,0 +1,340 @@
+---
+title: Core Concepts
+description: Understand how Tailscale sidecars work with Docker services
+---
+
+ScaleTail uses a **sidecar pattern** to integrate Tailscale with Docker services. This approach provides secure, private networking without modifying your application containers.
+
+## What is a Tailscale Sidecar?
+
+A sidecar is a companion container that runs alongside your main application container. In ScaleTail configurations:
+
+- **Tailscale container**: Handles all networking, authentication, and encryption
+- **Application container**: Runs your service (Jellyfin, Plex, Nextcloud, etc.)
+- **Network sharing**: The application routes all traffic through Tailscale's network stack
+
+```yaml
+services:
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: tailscale-myservice
+    # Tailscale configuration...
+
+  application:
+    image: my/application:latest
+    network_mode: service:tailscale  # This is the magic!
+    depends_on:
+      tailscale:
+        condition: service_healthy
+```
+
+<Info>
+  The sidecar pattern means you can add Tailscale to any existing Docker service without modifying the application image or code.
+</Info>
+
+## The network_mode: service Pattern
+
+The `network_mode: service:tailscale` directive is the core of the sidecar configuration. Here's what it does:
+
+### How It Works
+
+When you set `network_mode: service:tailscale`, Docker:
+
+1. **Shares the network namespace**: The application container uses the exact same network stack as the Tailscale container
+2. **Routes all traffic**: Every network request from the application goes through Tailscale
+3. **Provides localhost access**: The application can bind to `127.0.0.1` and Tailscale can proxy it
+
+```yaml
+application:
+  image: lscr.io/linuxserver/jellyfin:latest
+  network_mode: service:tailscale  # Share Tailscale's network
+  container_name: app-jellyfin
+  # No ports exposed - traffic flows through Tailscale!
+```
+
+### Key Implications
+
+<CardGroup cols={2}>
+  <Card title="No Direct Port Exposure" icon="shield">
+    The application container cannot expose ports directly. All traffic must go through Tailscale, ensuring security.
+  </Card>
+  
+  <Card title="Shared Network Identity" icon="network-wired">
+    Both containers share the same IP address and hostname within your Tailnet.
+  </Card>
+  
+  <Card title="Localhost Communication" icon="arrow-right-arrow-left">
+    Tailscale proxies requests to `127.0.0.1:<port>` where your application listens.
+  </Card>
+  
+  <Card title="Container Isolation" icon="box">
+    Processes remain isolated - only the network namespace is shared.
+  </Card>
+</CardGroup>
+
+### Example Flow
+
+```mermaid
+graph LR
+    A[Your Device] -->|Tailscale Connection| B[Tailscale Container]
+    B -->|127.0.0.1:8096| C[Jellyfin Container]
+    C -->|Response| B
+    B -->|Encrypted| A
+```
+
+1. Your device connects to `jellyfin.tail-scale.ts.net:443`
+2. Tailscale container receives the request
+3. Tailscale proxies to `http://127.0.0.1:8096` (Jellyfin's listening port)
+4. Jellyfin processes and responds
+5. Tailscale encrypts and sends back to your device
+
+## Understanding Tailnets
+
+A **Tailnet** is your private Tailscale network - think of it as a secure VPN that connects all your devices.
+
+### Tailnet Characteristics
+
+- **Unique namespace**: Each Tailnet has a unique name like `tail1234.ts.net`
+- **Device hostnames**: Devices appear as `hostname.tail1234.ts.net`
+- **Private by default**: Only devices in your Tailnet can communicate
+- **Encrypted mesh**: Direct, encrypted connections between devices (when possible)
+
+### Your Services on a Tailnet
+
+When you deploy a ScaleTail service:
+
+```yaml
+tailscale:
+  hostname: jellyfin  # Becomes: jellyfin.tail1234.ts.net
+  environment:
+    - TS_AUTHKEY=${TS_AUTHKEY}  # Authenticates to your Tailnet
+```
+
+The service appears as a device in your Tailnet, accessible at `https://jellyfin.tail1234.ts.net:443` from any device on the same Tailnet.
+
+<Note>
+  Devices must have Tailscale installed and be logged into your Tailnet to access your services.
+</Note>
+
+## Serve vs Funnel: When to Use Each
+
+Tailscale offers two modes for exposing services: **Serve** (private) and **Funnel** (public).
+
+### Tailscale Serve (Private Access)
+
+**Serve** exposes your service only to devices on your Tailnet. This is the default in ScaleTail configurations.
+
+```json
+{
+  "TCP": {"443": {"HTTPS": true}},
+  "Web": {
+    "jellyfin.tail1234.ts.net:443": {
+      "Handlers": {
+        "/": {"Proxy": "http://127.0.0.1:8096"}
+      }
+    }
+  },
+  "AllowFunnel": {"jellyfin.tail1234.ts.net:443": false}
+}
+```
+
+**Use Serve when:**
+- You want personal access to your services
+- You're sharing with family/team on the same Tailnet
+- Security and privacy are priorities
+- You don't need public internet access
+
+**Benefits:**
+- End-to-end encryption
+- No public exposure
+- No additional authentication needed
+- Built-in HTTPS with Tailscale certificates
+
+### Tailscale Funnel (Public Access)
+
+**Funnel** exposes your service to the public internet through Tailscale's infrastructure.
+
+```json
+{
+  "TCP": {"443": {"HTTPS": true}},
+  "Web": {
+    "jellyfin.tail1234.ts.net:443": {
+      "Handlers": {
+        "/": {"Proxy": "http://127.0.0.1:8096"}
+      }
+    }
+  },
+  "AllowFunnel": {"jellyfin.tail1234.ts.net:443": true}
+}
+```
+
+**Use Funnel when:**
+- You need to share with people outside your Tailnet
+- You're hosting a public website or API
+- You want public access without port forwarding
+- You need a public HTTPS endpoint
+
+**Benefits:**
+- No router configuration or port forwarding
+- Automatic HTTPS certificates
+- DDoS protection from Tailscale
+- Can disable anytime
+
+<Warning>
+  Funnel exposes your service to the **entire internet**. Ensure your application has proper authentication and security measures before enabling Funnel.
+</Warning>
+
+### Comparison Table
+
+| Feature | Serve (Private) | Funnel (Public) |
+|---------|----------------|------------------|
+| Access | Tailnet devices only | Anyone on the internet |
+| Authentication | Tailscale membership | Application-level required |
+| Use Case | Personal services, internal tools | Public websites, shared resources |
+| Security | Maximum (encrypted, private) | Depends on application |
+| Configuration | `"AllowFunnel": false` | `"AllowFunnel": true` |
+
+## Health Checks and Dependencies
+
+ScaleTail configurations use Docker health checks to ensure services start in the correct order and remain operational.
+
+### Tailscale Health Check
+
+The Tailscale container includes a built-in health check:
+
+```yaml
+tailscale:
+  environment:
+    - TS_ENABLE_HEALTH_CHECK=true
+    - TS_LOCAL_ADDR_PORT=127.0.0.1:41234
+  healthcheck:
+    test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:41234/healthz"]
+    interval: 1m
+    timeout: 10s
+    retries: 3
+    start_period: 10s
+```
+
+**What it checks:**
+- Tailscale daemon is running
+- Connected to your Tailnet
+- Has a valid Tailnet IP address
+- Network interface is operational
+
+### Application Dependency
+
+The application waits for Tailscale to be healthy before starting:
+
+```yaml
+application:
+  depends_on:
+    tailscale:
+      condition: service_healthy  # Wait for Tailscale to be ready
+  healthcheck:
+    test: ["CMD", "pgrep", "-f", "jellyfin"]
+    interval: 1m
+    timeout: 10s
+    retries: 3
+    start_period: 30s
+```
+
+**Why this matters:**
+- Prevents application from starting before networking is ready
+- Ensures reliable service initialization
+- Allows Docker to restart unhealthy containers automatically
+
+<Info>
+  The `start_period` gives the application time to initialize before health checks begin. Adjust this if your application takes longer to start.
+</Info>
+
+## Environment Variables Overview
+
+ScaleTail configurations use environment variables for flexible deployment. Here are the essential ones:
+
+### Tailscale Variables
+
+```bash
+# Authentication
+TS_AUTHKEY=tskey-auth-xxxxx  # Required: Your Tailscale auth key
+
+# State and Configuration
+TS_STATE_DIR=/var/lib/tailscale  # Where Tailscale stores state
+TS_SERVE_CONFIG=/config/serve.json  # Serve/Funnel configuration
+
+# Networking
+TS_USERSPACE=false  # Use kernel networking (faster)
+TS_ACCEPT_DNS=true  # Use Tailscale's MagicDNS
+
+# Health and Security
+TS_ENABLE_HEALTH_CHECK=true  # Enable /healthz endpoint
+TS_LOCAL_ADDR_PORT=127.0.0.1:41234  # Health check endpoint
+TS_AUTH_ONCE=true  # Don't re-authenticate on restart
+
+# Domain
+TS_CERT_DOMAIN=myservice.tail1234.ts.net  # Your service domain
+```
+
+### Application Variables
+
+```bash
+# Service Identification
+SERVICE=jellyfin  # Service name (used in container names)
+IMAGE_URL=lscr.io/linuxserver/jellyfin:latest  # Docker image
+
+# Common LinuxServer.io Variables
+PUID=1000  # User ID for file permissions
+PGID=1000  # Group ID for file permissions
+TZ=Europe/Amsterdam  # Timezone
+
+# Optional
+DNS_SERVER=1.1.1.1  # Custom DNS server
+SERVICEPORT=8096  # Application port (for reference)
+```
+
+### Using .env Files
+
+Store these in a `.env` file in the same directory as your `compose.yaml`:
+
+```bash .env
+# Tailscale
+TS_AUTHKEY=tskey-auth-k1a2b3c4CNTRL-d5e6f7g8h9i0j1k2l3m4n5o6p7q8r9s0
+TS_CERT_DOMAIN=jellyfin.tail1234.ts.net
+
+# Service
+SERVICE=jellyfin
+IMAGE_URL=lscr.io/linuxserver/jellyfin:latest
+```
+
+Docker Compose automatically loads these variables:
+
+```yaml
+services:
+  tailscale:
+    hostname: ${SERVICE}  # Becomes: jellyfin
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY}
+```
+
+<Warning>
+  Never commit `.env` files containing `TS_AUTHKEY` to version control. Add `.env` to your `.gitignore`.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Customize Your Service" icon="sliders" href="/configuration/environment-variables">
+    Learn to modify serve configurations, environment variables, and volumes
+  </Card>
+  
+  <Card title="Deploy an Exit Node" icon="right-from-bracket" href="/advanced/exit-nodes">
+    Route your internet traffic through a trusted Tailscale exit node
+  </Card>
+  
+  <Card title="Deployment Guide" icon="layer-group" href="/deployment/docker-compose">
+    Run multiple services on the same host with Docker Compose
+  </Card>
+  
+  <Card title="Troubleshooting" icon="screwdriver-wrench" href="/deployment/troubleshooting">
+    Common issues and how to resolve them
+  </Card>
+</CardGroup>

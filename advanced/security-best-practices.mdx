@@ -1,0 +1,700 @@
+---
+title: 'Security Best Practices'
+description: 'Harden your Tailscale deployment and protect your services'
+icon: 'shield-halved'
+---
+
+## Overview
+
+Running services on your Tailscale network provides significant security benefits over traditional port forwarding, but proper configuration is essential. This guide covers security best practices for ScaleTail deployments.
+
+## Fundamental Security Principles
+
+<CardGroup cols={2}>
+  <Card title="Defense in Depth" icon="layer-group">
+    Use multiple security layers - Tailscale ACLs, container isolation, application authentication, and system hardening.
+  </Card>
+  <Card title="Least Privilege" icon="lock">
+    Grant only the minimum access required. Restrict ACLs, limit container capabilities, and use read-only volumes where possible.
+  </Card>
+  <Card title="Secrets Management" icon="key">
+    Never commit secrets to version control. Use environment variables and secure storage.
+  </Card>
+  <Card title="Regular Updates" icon="rotate">
+    Keep Tailscale, Docker, and application images updated to patch security vulnerabilities.
+  </Card>
+</CardGroup>
+
+## Authentication and Authorization
+
+### Tailscale Auth Keys
+
+**Use ephemeral auth keys** for temporary deployments:
+
+```bash
+# Generate ephemeral key in Tailscale admin console
+TS_AUTHKEY=tskey-auth-xxxxx-ephemeral
+```
+
+Ephemeral keys automatically deauthorize when the container stops, preventing unauthorized reuse.
+
+**Use reusable keys only for persistent services:**
+
+```yaml
+environment:
+  - TS_AUTHKEY=${TS_AUTHKEY}  # Reusable for production services
+  - TS_AUTH_ONCE=true         # Authenticate only once
+```
+
+**Tag-based auth keys** restrict device tags:
+
+```bash
+# Create a tagged auth key that only allows tag:service
+TS_AUTHKEY=tskey-auth-xxxxx-tagged
+```
+
+<Warning>
+**Never commit real auth keys to version control.**
+
+Store `TS_AUTHKEY` in `.env` and add `.env` to `.gitignore`:
+
+```bash
+echo ".env" >> .gitignore
+```
+</Warning>
+
+### TS_AUTH_ONCE Configuration
+
+The `TS_AUTH_ONCE=true` setting prevents repeated authentication:
+
+```yaml
+environment:
+  - TS_AUTH_ONCE=true
+```
+
+Benefits:
+- Container only authenticates on first start
+- Prevents auth key reuse if container is compromised
+- State persisted in volume survives container restarts
+
+Ensure the state directory is persistent:
+
+```yaml
+volumes:
+  - ./ts/state:/var/lib/tailscale  # Must persist between restarts
+```
+
+## Access Control Lists (ACLs)
+
+### Restrict Service Access
+
+Use Tailscale ACLs to control who can access which services:
+
+```json
+{
+  "acls": [
+    {
+      "action": "accept",
+      "src": ["group:admins"],
+      "dst": ["tag:admin-services:*"]
+    },
+    {
+      "action": "accept",
+      "src": ["group:users"],
+      "dst": ["tag:user-services:80,443"]
+    }
+  ],
+  "groups": {
+    "group:admins": ["admin@example.com"],
+    "group:users": ["user1@example.com", "user2@example.com"]
+  },
+  "tagOwners": {
+    "tag:admin-services": ["group:admins"],
+    "tag:user-services": ["group:admins"]
+  }
+}
+```
+
+### Service-Specific Tags
+
+Apply tags to services using `TS_EXTRA_ARGS`:
+
+```yaml
+environment:
+  - TS_EXTRA_ARGS=--advertise-tags=tag:user-services
+```
+
+### Port-Level Restrictions
+
+Limit access to specific ports:
+
+```json
+{
+  "acls": [
+    {
+      "action": "accept",
+      "src": ["*"],
+      "dst": ["tag:web-services:443"]  // Only HTTPS
+    },
+    {
+      "action": "accept",
+      "src": ["group:admins"],
+      "dst": ["tag:databases:5432"]  // Admin-only database access
+    }
+  ]
+}
+```
+
+## Container Security
+
+### Minimize Capabilities
+
+Tailscale requires `net_admin`, but avoid adding unnecessary capabilities:
+
+```yaml
+tailscale:
+  cap_add:
+    - net_admin  # Required for Tailscale
+  # DO NOT add:
+  # - SYS_ADMIN
+  # - SYS_PTRACE
+  # - NET_RAW (unless specifically needed)
+```
+
+### Read-Only Volumes
+
+Use read-only mounts where data doesn't need to change:
+
+```yaml
+application:
+  volumes:
+    - ./html:/usr/share/nginx/html:ro  # Read-only web content
+    - ./config:/config                 # Read-write config
+```
+
+### User Permissions (PUID/PGID)
+
+Run containers as non-root users:
+
+```yaml
+application:
+  environment:
+    - PUID=1000  # Your user ID
+    - PGID=1000  # Your group ID
+```
+
+Verify your IDs:
+```bash
+id
+# uid=1000(user) gid=1000(user) groups=...
+```
+
+Pre-create directories with correct ownership:
+```bash
+mkdir -p ./service-data
+chown -R $(id -u):$(id -g) ./service-data
+```
+
+### Resource Limits
+
+Prevent resource exhaustion attacks:
+
+```yaml
+application:
+  deploy:
+    resources:
+      limits:
+        cpus: '2'
+        memory: 2G
+      reservations:
+        cpus: '0.5'
+        memory: 512M
+```
+
+## Network Security
+
+### Network Mode Considerations
+
+**Sidecar pattern (recommended for most services):**
+
+```yaml
+application:
+  network_mode: service:tailscale  # Isolates app to Tailscale network
+```
+
+Benefits:
+- Application only accessible via Tailscale
+- No direct host network exposure
+- Simple to configure
+
+**Bridge mode (for exit nodes):**
+
+```yaml
+tailscale:
+  network_mode: bridge  # Required for IP forwarding
+  sysctls:
+    net.ipv4.ip_forward: 1
+    net.ipv6.conf.all.forwarding: 1
+```
+
+<Warning>
+Exit nodes have elevated security risks:
+
+- Can see all unencrypted traffic from clients
+- Should only run on trusted networks
+- Require careful ACL configuration
+- Must be kept up-to-date with security patches
+</Warning>
+
+### Port Exposure
+
+**Default: No port exposure**
+
+```yaml
+#ports:  # Keep commented for Tailscale-only access
+#  - 0.0.0.0:${SERVICEPORT}:${SERVICEPORT}
+```
+
+**LAN exposure (only if required):**
+
+```yaml
+ports:
+  - 0.0.0.0:8080:8080  # Exposes to LAN - use with caution
+```
+
+**Localhost-only exposure:**
+
+```yaml
+ports:
+  - 127.0.0.1:8080:8080  # Only accessible from host
+```
+
+From `CONTRIBUTING.md`:
+> Keep the ports section commented unless LAN exposure is required; explain why in the README if you expose anything.
+
+### Firewall Configuration
+
+Even with Tailscale, maintain host firewall rules:
+
+```bash
+# UFW (Ubuntu)
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+sudo ufw allow 41641/udp  # Tailscale
+sudo ufw enable
+
+# Firewalld (RHEL/CentOS)
+sudo firewall-cmd --permanent --add-port=41641/udp
+sudo firewall-cmd --reload
+```
+
+## Exit Node Security
+
+### Restrict Exit Node Usage
+
+From the exit node documentation, configure ACLs to limit who can use exit nodes:
+
+```json
+{
+  "acls": [
+    {
+      "action": "accept",
+      "src": ["tag:trusted"],
+      "dst": ["tag:exitnode:*"]
+    }
+  ],
+  "tagOwners": {
+    "tag:exitnode": ["admin@example.com"],
+    "tag:trusted": ["admin@example.com"]
+  }
+}
+```
+
+Apply tags to your exit node:
+
+```yaml
+environment:
+  - TS_EXTRA_ARGS=--advertise-exit-node --advertise-tags=tag:exitnode
+```
+
+### Exit Node Sysctls
+
+The exit node configuration requires IP forwarding:
+
+```yaml
+sysctls:
+  net.ipv4.ip_forward: 1
+  net.ipv6.conf.all.forwarding: 1
+```
+
+These sysctls enable packet forwarding, which is powerful but potentially dangerous:
+
+<Warning>
+**Security implications of IP forwarding:**
+
+- Exit node can route traffic between networks
+- Misconfiguration could expose internal networks
+- Should only be enabled on dedicated exit node containers
+- Never enable on application containers
+</Warning>
+
+### DNS Security with Exit Nodes
+
+Prevent DNS leaks by forcing DNS through Tailscale:
+
+```yaml
+environment:
+  - TS_ACCEPT_DNS=true  # Use Tailscale DNS
+# Remove custom dns: section
+```
+
+Verify DNS routing:
+```bash
+curl https://dnsleaktest.com
+```
+
+## Secrets Management
+
+### Environment Variables
+
+**Store secrets in `.env` files:**
+
+```bash
+# .env
+TS_AUTHKEY=tskey-auth-xxxxx-xxxxxxxxxxxxxxxx
+DB_PASSWORD=secure-password-here
+API_KEY=api-key-here
+```
+
+**Add to `.gitignore`:**
+
+```bash
+echo ".env" >> .gitignore
+```
+
+**Provide `.env.example` with placeholders:**
+
+```bash
+# .env.example
+TS_AUTHKEY=tskey-auth-xxxxx-xxxxxxxxxxxxxxxx
+DB_PASSWORD=changeme
+API_KEY=your-api-key-here
+```
+
+### Docker Secrets (Swarm)
+
+For Docker Swarm deployments, use Docker secrets:
+
+```yaml
+secrets:
+  ts_authkey:
+    external: true
+
+services:
+  tailscale:
+    secrets:
+      - ts_authkey
+    environment:
+      - TS_AUTHKEY_FILE=/run/secrets/ts_authkey
+```
+
+Create the secret:
+```bash
+echo "tskey-auth-xxxxx" | docker secret create ts_authkey -
+```
+
+### Volume Permissions
+
+Protect sensitive volumes:
+
+```bash
+# Tailscale state
+chmod 700 ./ts/state
+
+# Application config
+chmod 600 ./config/secrets.yaml
+```
+
+## Image Security
+
+### Use Official Images
+
+Prefer official images from trusted sources:
+
+```yaml
+services:
+  tailscale:
+    image: tailscale/tailscale:latest  # Official Tailscale image
+  
+  application:
+    image: nginx:latest  # Official nginx image
+```
+
+### Pin Image Versions
+
+For production, pin specific versions:
+
+```yaml
+services:
+  tailscale:
+    image: tailscale/tailscale:v1.56.1  # Pinned version
+  
+  application:
+    image: nginx:1.25.3-alpine  # Pinned version
+```
+
+### Scan Images for Vulnerabilities
+
+```bash
+# Using Docker Scout
+docker scout cves tailscale/tailscale:latest
+
+# Using Trivy
+trivy image tailscale/tailscale:latest
+```
+
+### Regular Updates
+
+Update images regularly:
+
+```bash
+# Pull latest images
+docker compose pull
+
+# Recreate containers
+docker compose up -d
+```
+
+## Health Checks and Monitoring
+
+### Tailscale Health Check
+
+The template includes a Tailscale health check:
+
+```yaml
+tailscale:
+  environment:
+    - TS_ENABLE_HEALTH_CHECK=true
+    - TS_LOCAL_ADDR_PORT=127.0.0.1:41234
+  healthcheck:
+    test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:41234/healthz"]
+    interval: 1m
+    timeout: 10s
+    retries: 3
+    start_period: 10s
+```
+
+Monitor health status:
+```bash
+docker ps --filter health=unhealthy
+```
+
+### Application Health Checks
+
+Implement application-specific health checks:
+
+```yaml
+application:
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+    interval: 1m
+    timeout: 10s
+    retries: 3
+    start_period: 30s
+```
+
+### Log Monitoring
+
+Monitor for suspicious activity:
+
+```bash
+# Check Tailscale logs
+docker logs tailscale-${SERVICE} | grep -i "error\|failed\|unauthorized"
+
+# Check application logs
+docker logs app-${SERVICE} | grep -i "error\|failed\|unauthorized"
+```
+
+## MagicDNS Security
+
+### DNS Configuration
+
+From the MagicDNS documentation:
+
+```yaml
+environment:
+  - TS_ACCEPT_DNS=true  # Accept Tailscale DNS configuration
+```
+
+**Security implications:**
+- DNS queries route through Tailscale
+- Prevents DNS leaks when using exit nodes
+- Enables split DNS for internal services
+
+**When to disable:**
+- You need specific public DNS servers
+- DNS routing conflicts with your setup
+- Testing connectivity issues
+
+### Split DNS Security
+
+Use split DNS to isolate internal domains:
+
+```json
+// Tailscale DNS settings
+{
+  "nameservers": {
+    "internal.company.com": ["100.64.1.10"],
+    ".": ["1.1.1.1", "1.0.0.1"]
+  }
+}
+```
+
+Benefits:
+- Internal domains only resolve on Tailscale network
+- External domains use public DNS
+- Prevents information leakage
+
+## Incident Response
+
+### Disable Compromised Keys
+
+1. Go to [Tailscale admin console](https://login.tailscale.com/admin/authkeys)
+2. Revoke the compromised auth key
+3. Generate a new key
+4. Update `.env` and redeploy:
+   ```bash
+   docker compose down
+   # Update TS_AUTHKEY in .env
+   docker compose up -d
+   ```
+
+### Remove Compromised Device
+
+1. Navigate to [Machines](https://login.tailscale.com/admin/machines)
+2. Find the compromised device
+3. Click "Remove device"
+4. Review ACL logs for unauthorized access
+
+### Audit Access Logs
+
+Review Tailscale network logs:
+
+1. Go to [Network activity](https://login.tailscale.com/admin/network)
+2. Filter by date/device
+3. Look for unexpected connections
+4. Update ACLs to prevent future unauthorized access
+
+### Container Forensics
+
+If a container is compromised:
+
+```bash
+# Inspect container without stopping it
+docker inspect app-${SERVICE}
+
+# Check running processes
+docker exec app-${SERVICE} ps aux
+
+# Review container logs
+docker logs app-${SERVICE} > incident-logs.txt
+
+# Export container filesystem
+docker export app-${SERVICE} > container-snapshot.tar
+
+# Stop and remove compromised container
+docker compose down
+
+# Review snapshot offline
+tar -xf container-snapshot.tar -C /tmp/forensics
+```
+
+## Compliance Considerations
+
+### Data Residency
+
+Ensure services comply with data residency requirements:
+
+- Deploy services in appropriate geographic regions
+- Use exit nodes to control apparent location
+- Document data flow in your README
+
+### Audit Trails
+
+Maintain audit logs:
+
+```yaml
+services:
+  application:
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "10"
+```
+
+Centralize logs:
+```bash
+# Forward to syslog
+services:
+  application:
+    logging:
+      driver: syslog
+      options:
+        syslog-address: "tcp://192.168.1.100:514"
+```
+
+### Encryption at Rest
+
+Encrypt sensitive volumes:
+
+```bash
+# Using LUKS
+sudo cryptsetup luksFormat /dev/sdb1
+sudo cryptsetup open /dev/sdb1 encrypted-volume
+mkfs.ext4 /dev/mapper/encrypted-volume
+mount /dev/mapper/encrypted-volume ./service-data
+```
+
+## Security Checklist
+
+Before deploying a service, verify:
+
+- [ ] Secrets stored in `.env`, not committed to git
+- [ ] `.env` added to `.gitignore`
+- [ ] ACLs configured to restrict access
+- [ ] Tags applied to service (`TS_EXTRA_ARGS`)
+- [ ] `TS_AUTH_ONCE=true` enabled
+- [ ] Ephemeral or tagged auth key used
+- [ ] Ports commented unless LAN access required
+- [ ] Health checks configured for both containers
+- [ ] Volume permissions set correctly
+- [ ] `PUID`/`PGID` match non-root user
+- [ ] Read-only volumes where applicable
+- [ ] Resource limits configured
+- [ ] Official or trusted images used
+- [ ] Image versions pinned for production
+- [ ] Exit node ACLs restrict usage (if applicable)
+- [ ] DNS configuration appropriate for use case
+- [ ] Documentation includes security notes
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Exit Nodes" icon="route" href="/advanced/exit-nodes">
+    Secure exit node configuration
+  </Card>
+  <Card title="MagicDNS" icon="wand-magic-sparkles" href="/advanced/magicdns">
+    DNS security with MagicDNS
+  </Card>
+  <Card title="Custom Services" icon="wrench" href="/advanced/custom-services">
+    Secure custom service creation
+  </Card>
+</CardGroup>
+
+## Additional Reading
+
+- [Tailscale Security Practices](https://tailscale.com/security)
+- [Tailscale ACL Documentation](https://tailscale.com/kb/1018/acls)
+- [Docker Security Best Practices](https://docs.docker.com/engine/security/)
+- [CIS Docker Benchmark](https://www.cisecurity.org/benchmark/docker)

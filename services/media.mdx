@@ -1,0 +1,157 @@
+---
+title: 'Media & Entertainment'
+description: 'Self-hosted media streaming, management, and entertainment services'
+icon: 'film'
+---
+
+## Overview
+
+This category includes 24 media and entertainment services for streaming, downloading, organizing, and enjoying your personal media library. From audiobooks and music to movies and TV shows, these services provide complete media center capabilities.
+
+## Available Services
+
+| Service | Description |
+| ------- | ----------- |
+| **Audiobookshelf** | A self-hosted audiobook and podcast server with multi-user support and playback syncing |
+| **Bazarr** | A companion tool to Radarr and Sonarr for managing subtitles |
+| **BookLore** | A self-hosted application for managing and reading books |
+| **Configarr** | Manage and sync configuration for Radarr, Sonarr, and related services |
+| **Hytale** | A self-hosted Hytale game server |
+| **Immich** | A self-hosted Google Photos alternative with face recognition and mobile sync |
+| **Jellyfin** | An open-source media system that puts you in control of managing and streaming your media |
+| **Jellyseerr** | A request management and media discovery tool for Jellyfin and Plex users |
+| **Kavita** | An open-source, self-hosted digital library for comics, manga, and ebooks |
+| **Metube** | A self-hosted YouTube downloader with playlist support |
+| **Miniflux** | A minimalist and opinionated feed reader |
+| **Navidrome** | Your Personal Streaming Service self-hosted |
+| **Picard** | MusicBrainz Picard is a cross-platform music tagger for organizing and tagging music files |
+| **Plex** | A media server that organizes video, music, and photos from personal media libraries |
+| **Posterizarr** | Automatically generates and updates posters/artwork for media libraries |
+| **Prowlarr** | An indexer manager and proxy for applications like Radarr, Sonarr, and Lidarr |
+| **qBittorrent** | An open-source BitTorrent client |
+| **Radarr** | A movie collection manager for Usenet and BitTorrent users |
+| **Recyclarr** | Tools for managing, migrating, and maintaining indexers and quality profiles |
+| **Seerr** | A request management and media discovery tool for Plex, Jellyfin and Emby |
+| **Slink** | A fast, self-hosted alternative to ShareDrop for secure local file sharing |
+| **Sonarr** | A PVR for Usenet and BitTorrent users to manage TV series |
+| **Swing Music** | A fast, beautiful, self-hosted music streaming server for your local audio library |
+| **Tautulli** | A monitoring and tracking tool for Plex Media Server |
+
+## Featured Services
+
+<CardGroup cols={2}>
+  <Card title="Plex" icon="film" href="https://github.com/tailscale-dev/ScaleTail/tree/main/services/plex">
+    The most popular self-hosted media server
+  </Card>
+  <Card title="Jellyfin" icon="tv" href="https://github.com/tailscale-dev/ScaleTail/tree/main/services/jellyfin">
+    Free and open-source media server alternative
+  </Card>
+  <Card title="Immich" icon="images" href="https://github.com/tailscale-dev/ScaleTail/tree/main/services/immich">
+    Self-hosted Google Photos replacement
+  </Card>
+  <Card title="Audiobookshelf" icon="headphones" href="https://github.com/tailscale-dev/ScaleTail/tree/main/services/audiobookshelf">
+    Audiobooks and podcasts with syncing
+  </Card>
+</CardGroup>
+
+## Quick Setup Example
+
+### Plex Media Server
+
+Plex is the most popular self-hosted media server. Here's a basic setup:
+
+```yaml
+services:
+  plex:
+    image: plexinc/pms-docker:latest
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+    environment:
+      - PLEX_CLAIM=claim-xxxxx
+      - TZ=America/New_York
+    volumes:
+      - ./config:/config
+      - ./media:/media
+
+  tailscale:
+    image: tailscale/tailscale:latest
+    environment:
+      - TS_AUTHKEY=tskey-auth-xxxxx
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_SERVE_CONFIG=/config/serve-config.json
+    volumes:
+      - ./ts-state:/var/lib/tailscale
+      - ./serve-config.json:/config/serve-config.json
+```
+
+<Tip>
+Get your Plex claim token from [plex.tv/claim](https://www.plex.tv/claim/) to link your server to your account.
+</Tip>
+
+### Jellyfin
+
+Jellyfin is a completely free and open-source alternative to Plex:
+
+```yaml
+services:
+  jellyfin:
+    image: jellyfin/jellyfin:latest
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+    environment:
+      - TZ=America/New_York
+    volumes:
+      - ./config:/config
+      - ./cache:/cache
+      - ./media:/media
+
+  tailscale:
+    image: tailscale/tailscale:latest
+    environment:
+      - TS_AUTHKEY=tskey-auth-xxxxx
+      - TS_STATE_DIR=/var/lib/tailscale
+    volumes:
+      - ./ts-state:/var/lib/tailscale
+```
+
+## The *arr Stack
+
+Many users combine these services for automated media management:
+
+<Steps>
+  <Step title="Prowlarr">
+    Configure indexers and search providers
+  </Step>
+  <Step title="Sonarr & Radarr">
+    Automatically download and organize TV shows and movies
+  </Step>
+  <Step title="Bazarr">
+    Automatically download subtitles
+  </Step>
+  <Step title="qBittorrent">
+    Download client for torrents
+  </Step>
+  <Step title="Plex/Jellyfin">
+    Stream your organized media library
+  </Step>
+  <Step title="Jellyseerr/Seerr">
+    Request interface for users
+  </Step>
+</Steps>
+
+## Use Cases
+
+- **Personal media streaming** with Plex or Jellyfin
+- **Photo backup and sharing** with Immich
+- **Music streaming** with Navidrome or Swing Music
+- **Audiobooks and podcasts** with Audiobookshelf
+- **Comics and ebooks** with Kavita
+- **Automated media downloads** with the *arr stack
+- **Media monitoring** with Tautulli
+- **RSS feed reading** with Miniflux
+
+## Links
+
+All service configurations are available in the [ScaleTail GitHub repository](https://github.com/tailscale-dev/ScaleTail/tree/main/services).

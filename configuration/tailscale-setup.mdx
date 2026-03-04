@@ -1,0 +1,283 @@
+---
+title: 'Tailscale Setup'
+description: 'Configure Tailscale authentication keys and manage your devices through the admin console'
+icon: 'key'
+---
+
+## Overview
+
+Before deploying any ScaleTail service, you need to set up Tailscale authentication and configure your network. This guide walks you through generating auth keys and managing your Tailscale network (Tailnet).
+
+## Generating Authentication Keys
+
+Tailscale auth keys allow your Docker containers to automatically join your Tailnet without manual intervention.
+
+### Steps to Create an Auth Key
+
+<Steps>
+  <Step title="Access the Admin Console">
+    Navigate to the [Tailscale Admin Console](https://login.tailscale.com/admin/settings/keys)
+  </Step>
+  
+  <Step title="Generate a New Key">
+    Click on **Generate auth key** in the Keys section
+  </Step>
+  
+  <Step title="Configure Key Settings">
+    Set the following options based on your needs:
+    
+    - **Reusable**: Enable if you plan to use this key for multiple devices
+    - **Ephemeral**: Enable if you want devices to be automatically removed when they go offline
+    - **Pre-approved**: Enable to skip device authorization
+    - **Tags**: Add tags to organize and apply ACL rules to your devices
+  </Step>
+  
+  <Step title="Copy and Store">
+    Copy the generated key and store it securely. You'll use this as the `TS_AUTHKEY` environment variable.
+  </Step>
+</Steps>
+
+<Warning>
+  Auth keys are sensitive credentials. Never commit them to version control. Always use environment variables or secrets management.
+</Warning>
+
+## Recommended Key Configuration
+
+For ScaleTail deployments, we recommend the following settings:
+
+<ParamField path="Reusable" type="boolean" default="true">
+  Enable this to use the same key across multiple service deployments
+</ParamField>
+
+<ParamField path="Ephemeral" type="boolean" default="false">
+  Keep disabled for persistent services that should remain in your network
+</ParamField>
+
+<ParamField path="Pre-approved" type="boolean" default="true">
+  Enable to allow automatic device authorization during deployment
+</ParamField>
+
+<ParamField path="Expiration" type="string" default="90 days">
+  Set an appropriate expiration period. Consider using tags with never-expiring keys for production services
+</ParamField>
+
+## Using Auth Keys in ScaleTail
+
+Once you have your auth key, add it to your `.env` file:
+
+```bash .env
+TS_AUTHKEY=tskey-auth-xxxxxxxxxxxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+SERVICE=jellyfin
+TS_CERT_DOMAIN=jellyfin.your-tailnet.ts.net
+IMAGE_URL=jellyfin/jellyfin:latest
+```
+
+<Note>
+  The `TS_AUTHKEY` is automatically consumed by all ScaleTail service configurations through the Docker Compose environment variables.
+</Note>
+
+## Managing Devices in Admin Console
+
+### Viewing Your Devices
+
+After deploying a service, it will appear in your [Machines](https://login.tailscale.com/admin/machines) page:
+
+1. **Machine Name**: The hostname you specified in your `compose.yaml`
+2. **IP Address**: The Tailscale IP assigned to your container
+3. **Status**: Online/Offline status
+4. **Last Seen**: Timestamp of last activity
+
+### Key Management Tasks
+
+<AccordionGroup>
+  <Accordion title="Approving Devices">
+    If you didn't use pre-approved keys, you'll need to manually approve new devices:
+    
+    1. Go to the [Machines](https://login.tailscale.com/admin/machines) page
+    2. Find your device in the "Pending" section
+    3. Click **Approve** to add it to your Tailnet
+  </Accordion>
+  
+  <Accordion title="Configuring Device Tags">
+    Tags help organize devices and apply ACL rules:
+    
+    1. Click on a device in the Machines page
+    2. Navigate to the **Tags** section
+    3. Add tags like `tag:docker`, `tag:media`, or `tag:admin`
+    4. Save your changes
+    
+    These tags can be referenced in your ACL policies for fine-grained access control.
+  </Accordion>
+  
+  <Accordion title="Removing Devices">
+    To remove a device from your Tailnet:
+    
+    1. Click on the device in the Machines page
+    2. Click the **...** menu
+    3. Select **Delete**
+    4. Confirm the deletion
+    
+    <Warning>
+      Deleting a device will immediately revoke its access to your Tailnet.
+    </Warning>
+  </Accordion>
+  
+  <Accordion title="Renaming Devices">
+    To change a device's display name:
+    
+    1. Click on the device in the Machines page
+    2. Click on the current name
+    3. Enter a new name
+    4. Save your changes
+    
+    <Note>
+      This is cosmetic and doesn't affect the device's hostname or DNS entries.
+    </Note>
+  </Accordion>
+</AccordionGroup>
+
+## Access Control Lists (ACLs)
+
+ACLs define which devices can communicate with each other in your Tailnet. This is crucial for security when running multiple services.
+
+### Basic ACL Example
+
+Here's a simple ACL that allows all devices to communicate:
+
+```json
+{
+  "acls": [
+    {
+      "action": "accept",
+      "src": ["*"],
+      "dst": ["*:*"]
+    }
+  ]
+}
+```
+
+### Tagged ACL Example
+
+For more granular control using tags:
+
+```json
+{
+  "tagOwners": {
+    "tag:docker": ["autogroup:admin"],
+    "tag:media": ["autogroup:admin"],
+    "tag:admin": ["autogroup:admin"]
+  },
+  "acls": [
+    {
+      "action": "accept",
+      "src": ["autogroup:admin"],
+      "dst": ["tag:admin:*"]
+    },
+    {
+      "action": "accept",
+      "src": ["autogroup:member"],
+      "dst": ["tag:media:*"]
+    }
+  ]
+}
+```
+
+<Note>
+  Edit your ACLs at [https://login.tailscale.com/admin/acls](https://login.tailscale.com/admin/acls)
+</Note>
+
+## MagicDNS Configuration
+
+MagicDNS automatically assigns DNS names to your devices based on their hostname.
+
+### Enabling MagicDNS
+
+1. Go to [DNS Settings](https://login.tailscale.com/admin/dns)
+2. Enable **MagicDNS**
+3. Optionally configure a custom domain suffix
+
+### Using MagicDNS with ScaleTail
+
+When MagicDNS is enabled, uncomment the `TS_ACCEPT_DNS` line in your compose files:
+
+```yaml
+environment:
+  - TS_ACCEPT_DNS=true # Uncomment when using MagicDNS
+```
+
+Your services will be accessible via hostnames like:
+- `jellyfin.your-tailnet.ts.net`
+- `portainer.your-tailnet.ts.net`
+
+## Security Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Rotate Keys Regularly" icon="rotate">
+    Generate new auth keys periodically and update your deployments to minimize exposure from compromised keys.
+  </Card>
+  
+  <Card title="Use Tagged Keys" icon="tags">
+    Apply tags to auth keys to automatically assign ACL rules to new devices.
+  </Card>
+  
+  <Card title="Enable Key Expiration" icon="clock">
+    Set expiration dates on auth keys to limit their lifetime and reduce security risks.
+  </Card>
+  
+  <Card title="Monitor Device Activity" icon="chart-line">
+    Regularly review the Machines page to identify and remove unused or suspicious devices.
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Container fails to join Tailnet">
+    **Symptoms**: Container starts but doesn't appear in Tailscale admin console
+    
+    **Solutions**:
+    - Verify `TS_AUTHKEY` is correctly set in your `.env` file
+    - Check that the auth key hasn't expired
+    - Ensure the container has the `net_admin` capability
+    - Verify `/dev/net/tun` device is accessible
+  </Accordion>
+  
+  <Accordion title="Auth key rejected">
+    **Symptoms**: Error message about invalid or expired key
+    
+    **Solutions**:
+    - Generate a new auth key from the admin console
+    - Verify you copied the entire key string
+    - Check if the key has reached its usage limit (for non-reusable keys)
+  </Accordion>
+  
+  <Accordion title="Device shows as offline">
+    **Symptoms**: Device appears in admin console but shows offline status
+    
+    **Solutions**:
+    - Check container logs: `docker compose logs tailscale`
+    - Verify network connectivity from the container
+    - Ensure health check is passing
+    - Restart the Tailscale container
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Sidecar Pattern" icon="layer-group" href="/configuration/sidecar-pattern">
+    Learn how the Docker sidecar pattern works in ScaleTail
+  </Card>
+  
+  <Card title="Environment Variables" icon="code" href="/configuration/environment-variables">
+    Complete reference for all Tailscale environment variables
+  </Card>
+  
+  <Card title="Serve vs Funnel" icon="network-wired" href="/configuration/serve-vs-funnel">
+    Understand when to use Serve or Funnel for exposing services
+  </Card>
+  
+  <Card title="Deploy a Service" icon="rocket" href="/quickstart">
+    Deploy your first ScaleTail service
+  </Card>
+</CardGroup>

@@ -1,0 +1,160 @@
+---
+title: 'Monitoring & Analytics'
+description: 'System monitoring, uptime tracking, and analytics services'
+icon: 'chart-line'
+---
+
+## Overview
+
+This category includes 7 monitoring and analytics services to keep track of your infrastructure, services, and media consumption. From uptime monitoring to system statistics and Plex analytics, these tools provide visibility into your self-hosted environment.
+
+## Available Services
+
+| Service | Description |
+| ------- | ----------- |
+| **Beszel Agent** | The Beszel Agent collects stats and reports them back to the Hub |
+| **Beszel Hub** | The Beszel Hub provides historical monitoring data, Docker stats, and alerts |
+| **Glance** | A concise, customizable dashboard for self-hosted services and personal metrics |
+| **Homepage** | A modern, highly customizable homepage for organizing links and monitoring services |
+| **Portracker** | A simple, self-hosted port monitoring and tracking tool for auditing open ports |
+| **Speedtest Tracker** | A self-hosted tool to monitor and log internet speed tests with detailed visualizations |
+| **Tautulli** | A monitoring and tracking tool for Plex Media Server |
+| **Uptime Kuma** | A self-hosted monitoring tool like "Uptime Robot" |
+
+<Note>
+Glance and Homepage are also listed in the "Dashboards and Visualization" category in the README.
+</Note>
+
+## Featured Services
+
+<CardGroup cols={2}>
+  <Card title="Uptime Kuma" icon="heart-pulse" href="https://github.com/tailscale-dev/ScaleTail/tree/main/services/uptime-kuma">
+    Most popular self-hosted uptime monitoring
+  </Card>
+  <Card title="Beszel" icon="chart-area" href="https://github.com/tailscale-dev/ScaleTail/tree/main/services/beszel-hub">
+    Lightweight system monitoring with Docker stats
+  </Card>
+  <Card title="Tautulli" icon="film" href="https://github.com/tailscale-dev/ScaleTail/tree/main/services/tautulli">
+    Comprehensive Plex Media Server monitoring
+  </Card>
+  <Card title="Speedtest Tracker" icon="gauge-high" href="https://github.com/tailscale-dev/ScaleTail/tree/main/services/speedtest-tracker">
+    Track internet speed over time
+  </Card>
+</CardGroup>
+
+## Quick Setup Example
+
+### Uptime Kuma
+
+Uptime Kuma is a self-hosted alternative to Uptime Robot with a beautiful interface:
+
+```yaml
+services:
+  uptime-kuma:
+    image: louislam/uptime-kuma:latest
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+    volumes:
+      - ./uptime-kuma-data:/app/data
+
+  tailscale:
+    image: tailscale/tailscale:latest
+    environment:
+      - TS_AUTHKEY=tskey-auth-xxxxx
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_SERVE_CONFIG=/config/serve-config.json
+    volumes:
+      - ./ts-state:/var/lib/tailscale
+      - ./serve-config.json:/config/serve-config.json
+```
+
+<Tip>
+Uptime Kuma supports monitoring HTTP(s), TCP, Ping, DNS, and more. Set up notifications via Discord, Slack, email, and 90+ other services.
+</Tip>
+
+### Beszel (Hub + Agent)
+
+Beszel provides lightweight system monitoring. Deploy the hub centrally and agents on each server:
+
+**Hub:**
+```yaml
+services:
+  beszel-hub:
+    image: henrygd/beszel:latest
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+    volumes:
+      - ./beszel-data:/beszel/data
+
+  tailscale:
+    image: tailscale/tailscale:latest
+    environment:
+      - TS_AUTHKEY=tskey-auth-xxxxx
+      - TS_STATE_DIR=/var/lib/tailscale
+    volumes:
+      - ./ts-state:/var/lib/tailscale
+```
+
+**Agent:**
+```yaml
+services:
+  beszel-agent:
+    image: henrygd/beszel-agent:latest
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+    environment:
+      - KEY=your-agent-key-from-hub
+      - PORT=45876
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  tailscale:
+    image: tailscale/tailscale:latest
+    environment:
+      - TS_AUTHKEY=tskey-auth-xxxxx
+      - TS_STATE_DIR=/var/lib/tailscale
+    volumes:
+      - ./ts-state:/var/lib/tailscale
+```
+
+## Monitoring Stack
+
+Build a comprehensive monitoring solution:
+
+<Steps>
+  <Step title="Uptime Kuma">
+    Monitor service availability and uptime
+  </Step>
+  <Step title="Beszel Hub + Agents">
+    Track system resources and Docker container stats
+  </Step>
+  <Step title="Speedtest Tracker">
+    Monitor internet connection performance
+  </Step>
+  <Step title="Portracker">
+    Audit open ports on your network
+  </Step>
+  <Step title="Tautulli">
+    Monitor Plex usage and playback statistics
+  </Step>
+  <Step title="Homepage or Glance">
+    Create a unified dashboard for all services
+  </Step>
+</Steps>
+
+## Use Cases
+
+- **Service uptime monitoring** with Uptime Kuma
+- **System resource tracking** with Beszel Hub and Agents
+- **Internet speed monitoring** with Speedtest Tracker
+- **Port scanning and auditing** with Portracker
+- **Plex analytics** with Tautulli
+- **Service dashboards** with Homepage or Glance
+- **Infrastructure visibility** across all self-hosted services
+
+## Links
+
+All service configurations are available in the [ScaleTail GitHub repository](https://github.com/tailscale-dev/ScaleTail/tree/main/services).

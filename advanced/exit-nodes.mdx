@@ -1,0 +1,243 @@
+---
+title: 'Exit Nodes'
+description: 'Configure Tailscale exit nodes to route internet traffic through your network'
+icon: 'route'
+---
+
+## Overview
+
+A Tailscale Exit Node is a device within your Tailscale network that other devices can use as a gateway to the internet. By setting up an Exit Node, you ensure that all traffic from connected devices is routed through a secure and private network, benefiting from the encryption and privacy that Tailscale provides.
+
+This is particularly useful for:
+- Securing internet traffic when connected to untrusted networks
+- Routing traffic through your home or office network
+- Accessing region-specific content
+- Adding an extra layer of privacy to your browsing
+
+## Exit Node Configuration
+
+The exit node service requires specific Docker and system configurations to enable IP forwarding and traffic routing.
+
+### Complete Example
+
+Here's a complete `compose.yaml` configuration for a Tailscale exit node:
+
+```yaml
+services:
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: tailscale-${SERVICE}
+    hostname: ${SERVICE}
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY}
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_EXTRA_ARGS=--advertise-exit-node
+      - TS_USERSPACE=false
+      - TS_ENABLE_HEALTH_CHECK=true
+      - TS_LOCAL_ADDR_PORT=127.0.0.1:41234
+      - TS_AUTH_ONCE=true
+    volumes:
+      - ./ts/state:/var/lib/tailscale
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    dns:
+      - ${DNS_SERVER}
+    sysctls:
+      net.ipv4.ip_forward: 1
+      net.ipv6.conf.all.forwarding: 1
+    cap_add:
+      - net_admin
+    network_mode: bridge
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:41234/healthz"]
+      interval: 1m
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: always
+```
+
+### Key Configuration Options
+
+#### TS_EXTRA_ARGS
+
+The `TS_EXTRA_ARGS` environment variable is used to pass additional arguments to the Tailscale daemon:
+
+```yaml
+environment:
+  - TS_EXTRA_ARGS=--advertise-exit-node
+```
+
+This flag designates the container as an Exit Node within your Tailscale network. You can combine multiple arguments:
+
+```yaml
+environment:
+  - TS_EXTRA_ARGS=--advertise-exit-node --advertise-tags=tag:exitnode
+```
+
+#### Sysctls for IP Forwarding
+
+**Required for exit nodes** - these system controls enable IP forwarding, which is necessary for routing traffic:
+
+```yaml
+sysctls:
+  net.ipv4.ip_forward: 1                # Enable IPv4 forwarding
+  net.ipv6.conf.all.forwarding: 1       # Enable IPv6 forwarding
+```
+
+<Warning>
+Without these sysctls, the exit node will not be able to forward traffic, and clients attempting to use it will experience connectivity issues.
+</Warning>
+
+#### Network Mode
+
+Exit nodes require `bridge` network mode instead of the typical `service:tailscale` sidecar pattern:
+
+```yaml
+network_mode: bridge
+```
+
+This creates a virtual network interface for the container, enabling it to handle traffic routing between your Tailscale network and the internet.
+
+### Environment Variables
+
+Create a `.env` file with the following variables:
+
+```bash
+SERVICE=exit-node
+TS_AUTHKEY=tskey-auth-xxxxx-xxxxxxxxxxxxxxxx
+DNS_SERVER=1.1.1.1
+```
+
+## Post-Deployment Steps
+
+### 1. Enable the Exit Node
+
+After deploying the container, you need to enable it in the Tailscale admin console:
+
+1. Navigate to https://login.tailscale.com/admin/machines
+2. Find your exit node device
+3. Click the three-dot menu
+4. Select "Edit route settings"
+5. Enable "Use as exit node"
+
+### 2. Use the Exit Node from Client Devices
+
+On any device in your Tailscale network:
+
+**macOS/Linux:**
+```bash
+tailscale set --exit-node=<exit-node-hostname>
+```
+
+**Windows:**
+```powershell
+tailscale set --exit-node=<exit-node-hostname>
+```
+
+**Mobile:**
+1. Open the Tailscale app
+2. Tap the three-dot menu
+3. Select "Use exit node"
+4. Choose your exit node
+
+### 3. Verify Exit Node Status
+
+Check that traffic is routing through the exit node:
+
+```bash
+curl ifconfig.me
+```
+
+The IP address should match your exit node's public IP, not your client's.
+
+## Security Considerations
+
+<Warning>
+**Exit nodes have significant security implications:**
+
+- Exit nodes can see all unencrypted traffic from connected clients
+- Only run exit nodes on networks you trust and control
+- Exit nodes should be kept up-to-date with security patches
+- Consider using ACLs to restrict which devices can use the exit node
+</Warning>
+
+### Recommended ACL Configuration
+
+Restrict exit node usage to specific users or tags:
+
+```json
+{
+  "acls": [
+    {
+      "action": "accept",
+      "src": ["tag:trusted"],
+      "dst": ["tag:exitnode:*"]
+    }
+  ],
+  "tagOwners": {
+    "tag:exitnode": ["admin@example.com"],
+    "tag:trusted": ["admin@example.com"]
+  }
+}
+```
+
+Apply the tag to your exit node:
+
+```yaml
+environment:
+  - TS_EXTRA_ARGS=--advertise-exit-node --advertise-tags=tag:exitnode
+```
+
+## Troubleshooting
+
+### Exit Node Not Appearing
+
+**Check the container logs:**
+```bash
+docker logs tailscale-exit-node
+```
+
+Look for messages about exit node advertisement.
+
+**Verify sysctls are applied:**
+```bash
+docker exec tailscale-exit-node sysctl net.ipv4.ip_forward
+docker exec tailscale-exit-node sysctl net.ipv6.conf.all.forwarding
+```
+
+Both should return `1`.
+
+### Traffic Not Routing
+
+**Verify the exit node is enabled** in the Tailscale admin console.
+
+**Check firewall rules** on the host machine - ensure outbound traffic is allowed.
+
+**Test DNS resolution:**
+```bash
+docker exec tailscale-exit-node nslookup google.com
+```
+
+### Performance Issues
+
+- Ensure the host has sufficient bandwidth
+- Check CPU usage during peak traffic
+- Consider enabling hardware acceleration if available
+- Monitor container resource limits
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="MagicDNS" icon="wand-magic-sparkles" href="/advanced/magicdns">
+    Configure DNS for seamless service access
+  </Card>
+  <Card title="Security Best Practices" icon="shield-halved" href="/advanced/security-best-practices">
+    Harden your Tailscale deployment
+  </Card>
+</CardGroup>
+
+## Additional Reading
+
+- [Tailscale Exit Nodes Documentation](https://tailscale.com/kb/1103/exit-nodes)
+- [Exit Node Security Considerations](https://tailscale.com/kb/1103/exit-nodes#security-considerations)

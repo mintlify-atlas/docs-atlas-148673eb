@@ -1,0 +1,118 @@
+---
+title: 'Networking & Security'
+description: 'Network infrastructure and security services with Tailscale integration'
+icon: 'shield'
+---
+
+## Overview
+
+This category includes 11 networking and security services that help you build secure, private infrastructure. From DNS servers and ad blockers to reverse proxies and VPN exit nodes, these services form the foundation of a secure self-hosted environment.
+
+## Available Services
+
+| Service | Description |
+| ------- | ----------- |
+| **AdGuard Home** | Network-wide software for blocking ads and tracking |
+| **AdGuardHome Sync** | A tool for syncing configuration across multiple AdGuard Home instances |
+| **Caddy** | Caddy is an extensible server platform that uses TLS by default |
+| **DDNS Updater** | A self-hosted solution to keep DNS A/AAAA records updated automatically |
+| **Nessus** | A powerful vulnerability scanner with a free Essentials model for home use |
+| **Netbox** | NetBox is the leading solution for modeling and documenting modern networks |
+| **Pi-hole** | A network-level ad blocker that acts as a DNS sinkhole |
+| **Pocket ID** | A self-hosted decentralized identity (OIDC) solution for secure authentication |
+| **Technitium DNS** | An open-source DNS server that can be used for self-hosted DNS services |
+| **Traefik** | A modern reverse proxy and load balancer for microservices |
+| **Tailscale Exit Node** | Configure a device to act as an exit node for your Tailscale network |
+
+## Featured Services
+
+<CardGroup cols={2}>
+  <Card title="Pi-hole" icon="circle-stop" href="https://github.com/tailscale-dev/ScaleTail/tree/main/services/pihole">
+    Popular network-level ad blocker with DNS sinkhole
+  </Card>
+  <Card title="AdGuard Home" icon="shield-halved" href="https://github.com/tailscale-dev/ScaleTail/tree/main/services/adguardhome">
+    Advanced ad and tracker blocking with detailed analytics
+  </Card>
+  <Card title="Traefik" icon="route" href="https://github.com/tailscale-dev/ScaleTail/tree/main/services/traefik">
+    Modern reverse proxy and load balancer
+  </Card>
+  <Card title="Caddy" icon="server" href="https://github.com/tailscale-dev/ScaleTail/tree/main/services/caddy">
+    Automatic HTTPS with built-in TLS
+  </Card>
+</CardGroup>
+
+## Quick Setup Example
+
+### Pi-hole
+
+Pi-hole is one of the most popular network-level ad blockers. Here's how to get started:
+
+```yaml
+services:
+  pihole:
+    image: pihole/pihole:latest
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+    environment:
+      TZ: 'America/New_York'
+      WEBPASSWORD: 'your-secure-password'
+    volumes:
+      - './etc-pihole:/etc/pihole'
+      - './etc-dnsmasq.d:/etc/dnsmasq.d'
+
+  tailscale:
+    image: tailscale/tailscale:latest
+    environment:
+      - TS_AUTHKEY=tskey-auth-xxxxx
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_SERVE_CONFIG=/config/serve-config.json
+    volumes:
+      - ./ts-state:/var/lib/tailscale
+      - ./serve-config.json:/config/serve-config.json
+```
+
+<Tip>
+After deploying, access Pi-hole's admin interface via your Tailscale network at the hostname you configured.
+</Tip>
+
+### Traefik
+
+Traefik is a modern reverse proxy perfect for managing multiple services:
+
+```yaml
+services:
+  traefik:
+    image: traefik:latest
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--entrypoints.web.address=:80"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  tailscale:
+    image: tailscale/tailscale:latest
+    environment:
+      - TS_AUTHKEY=tskey-auth-xxxxx
+      - TS_STATE_DIR=/var/lib/tailscale
+    volumes:
+      - ./ts-state:/var/lib/tailscale
+```
+
+## Use Cases
+
+- **Network-wide ad blocking** with Pi-hole or AdGuard Home
+- **Reverse proxy** for multiple services with Traefik or Caddy
+- **DNS management** with Technitium DNS or DDNS Updater
+- **Authentication** with Pocket ID for OIDC/SSO
+- **Network documentation** with Netbox
+- **Security scanning** with Nessus
+- **Exit node** for routing internet traffic through your Tailscale network
+
+## Links
+
+All service configurations are available in the [ScaleTail GitHub repository](https://github.com/tailscale-dev/ScaleTail/tree/main/services).

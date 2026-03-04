@@ -1,0 +1,87 @@
+---
+title: 'Services Overview'
+description: 'Explore the complete catalog of 95+ pre-configured services with Tailscale sidecar integration'
+icon: 'layer-group'
+---
+
+## Introduction
+
+ScaleTail provides a comprehensive catalog of **95+ pre-configured services** with Tailscale sidecar integration. Each service includes ready-to-use Docker Compose configurations that seamlessly integrate Tailscale's secure networking capabilities, making it easy to self-host applications with zero-config networking.
+
+## Service Categories
+
+Explore our services organized by category:
+
+<CardGroup cols={2}>
+  <Card title="Networking & Security" icon="shield" href="/services/networking">
+    11 services including Pi-hole, AdGuard Home, Traefik, and Caddy
+  </Card>
+  <Card title="Media & Entertainment" icon="film" href="/services/media">
+    24 services including Plex, Jellyfin, Sonarr, Radarr, and Immich
+  </Card>
+  <Card title="Productivity & Collaboration" icon="briefcase" href="/services/productivity">
+    26 services including Nextcloud, Vaultwarden, Ghost, and Docmost
+  </Card>
+  <Card title="Development Tools" icon="code" href="/services/development">
+    14 services including Portainer, Dozzle, Forgejo, and Coder
+  </Card>
+  <Card title="Monitoring & Analytics" icon="chart-line" href="/services/monitoring">
+    7 services including Uptime Kuma, Beszel, Speedtest Tracker, and Tautulli
+  </Card>
+  <Card title="Utilities" icon="wrench" href="/services/utilities">
+    13 services including Gotify, ntfy, Homebox, and LubeLogger
+  </Card>
+</CardGroup>
+
+## Quick Stats
+
+<CardGroup cols={3}>
+  <Card title="Total Services" icon="layer-group">
+    95+
+  </Card>
+  <Card title="Categories" icon="folder-tree">
+    9
+  </Card>
+  <Card title="GitHub Stars" icon="star">
+    Active Community
+  </Card>
+</CardGroup>
+
+## What's Included
+
+Each service configuration includes:
+
+- **Docker Compose file** with Tailscale sidecar
+- **Environment variables** and configuration options
+- **Setup instructions** specific to the service
+- **Network routing** via Tailscale Serve or Funnel
+- **Authentication options** using Tailscale auth keys
+
+## Popular Services
+
+<CardGroup cols={2}>
+  <Card title="Plex" icon="film" href="https://github.com/tailscale-dev/ScaleTail/tree/main/services/plex">
+    Stream your personal media library anywhere
+  </Card>
+  <Card title="Pi-hole" icon="circle-stop" href="https://github.com/tailscale-dev/ScaleTail/tree/main/services/pihole">
+    Network-wide ad blocking
+  </Card>
+  <Card title="Nextcloud" icon="cloud" href="https://github.com/tailscale-dev/ScaleTail/tree/main/services/nextcloud">
+    Your own cloud storage and collaboration platform
+  </Card>
+  <Card title="Uptime Kuma" icon="chart-line" href="https://github.com/tailscale-dev/ScaleTail/tree/main/services/uptime-kuma">
+    Self-hosted uptime monitoring
+  </Card>
+</CardGroup>
+
+## Getting Started
+
+1. Browse the category pages to find services that fit your needs
+2. Visit the GitHub repo for detailed setup instructions
+3. Copy the Docker Compose configuration
+4. Add your Tailscale auth key
+5. Deploy with `docker compose up -d`
+
+## Contributing
+
+Want to add a new service? Use the [service template](https://github.com/tailscale-dev/ScaleTail/tree/main/templates/service-template) or open an [issue](https://github.com/tailscale-dev/ScaleTail/issues) on GitHub.

@@ -1,0 +1,150 @@
+---
+title: 'Productivity & Collaboration'
+description: 'Tools for productivity, note-taking, collaboration, and project management'
+icon: 'briefcase'
+---
+
+## Overview
+
+This category includes 26 productivity and collaboration services covering everything from note-taking and task management to file sharing and team collaboration. Build your personal productivity suite with these self-hosted alternatives to popular cloud services.
+
+## Available Services
+
+| Service | Description |
+| ------- | ----------- |
+| **BentoPDF** | A lightweight, self-hosted web app for viewing and managing PDF documents |
+| **ClipCascade** | A self-hosted clipboard manager for syncing and organizing clipboard history |
+| **Copyparty** | A self-hosted file server with accelerated resumable uploads |
+| **Docmost** | A self-hosted, real-time collaborative wiki with rich editing, diagrams, permissions, and full-text search |
+| **Donetick** | A self-hosted task and checklist manager for productivity |
+| **DumbDo** | A self-hosted, minimalistic task manager for simple to-do lists |
+| **Eigenfocus** | A self-hosted task and project management tool for productivity |
+| **Excalidraw** | A virtual collaborative whiteboard tool |
+| **Flatnotes** | A simple, self-hosted note-taking app using Markdown files |
+| **Formbricks** | A self-hosted, open-source platform for collecting user feedback, surveys, and NPS |
+| **Forgejo** | A community-driven, self-hosted Git service |
+| **Ghost** | A modern, open-source publishing platform for blogs and newsletters |
+| **Gramps Web** | A web-based genealogy platform for collaborative family tree browsing, editing, AI-powered chat, media tagging, mapping, charts, search, and reporting |
+| **Haptic** | Haptic is a new local-first & privacy-focused, open-source home for your markdown notes |
+| **Isley** | A self-hosted cannabis grow journal for tracking plants and managing grow data |
+| **Kaneo** | A modern, self-hosted project management platform focused on simplicity |
+| **Karakeep** | A self-hosted, collaborative note-taking app — a private alternative to Google Keep |
+| **LanguageTool** | An open-source proofreading software for multiple languages |
+| **Linkding** | A self-hosted bookmark manager to save and organize links |
+| **Mattermost** | A self-hosted collaborative workflow and communication tool |
+| **Nanote** | A lightweight, self-hosted note-taking app with Markdown support |
+| **NextCloud** | A suite of client-server software for creating and using file hosting services |
+| **Pingvin Share** | **PROJECT ARCHIVED** A self-hosted file sharing platform |
+| **Resilio Sync** | A fast, reliable, and simple file sync and share solution |
+| **Stirling-PDF** | A web application for managing and editing PDF files |
+| **Subtrackr** | A self-hosted web app to track subscriptions, renewal dates, costs, and payment methods |
+| **Vaultwarden** | An unofficial Bitwarden server implementation written in Rust |
+| **Wallos** | An open-source, self-hostable web app to track and manage your recurring subscriptions and expenses, with multi-currency support, customizable categories, and statistics |
+
+## Featured Services
+
+<CardGroup cols={2}>
+  <Card title="Nextcloud" icon="cloud" href="https://github.com/tailscale-dev/ScaleTail/tree/main/services/nextcloud">
+    Complete cloud platform with files, calendar, contacts, and more
+  </Card>
+  <Card title="Vaultwarden" icon="lock" href="https://github.com/tailscale-dev/ScaleTail/tree/main/services/vaultwarden">
+    Self-hosted password manager (Bitwarden compatible)
+  </Card>
+  <Card title="Ghost" icon="pencil" href="https://github.com/tailscale-dev/ScaleTail/tree/main/services/ghost">
+    Professional blogging and newsletter platform
+  </Card>
+  <Card title="Docmost" icon="book" href="https://github.com/tailscale-dev/ScaleTail/tree/main/services/docmost">
+    Real-time collaborative wiki and documentation
+  </Card>
+</CardGroup>
+
+## Quick Setup Example
+
+### Vaultwarden
+
+Vaultwarden is a lightweight, self-hosted password manager compatible with Bitwarden clients:
+
+```yaml
+services:
+  vaultwarden:
+    image: vaultwarden/server:latest
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+    environment:
+      - DOMAIN=https://vault.your-tailnet.ts.net
+      - SIGNUPS_ALLOWED=true
+    volumes:
+      - ./vw-data:/data
+
+  tailscale:
+    image: tailscale/tailscale:latest
+    environment:
+      - TS_AUTHKEY=tskey-auth-xxxxx
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_SERVE_CONFIG=/config/serve-config.json
+    volumes:
+      - ./ts-state:/var/lib/tailscale
+      - ./serve-config.json:/config/serve-config.json
+```
+
+<Warning>
+After creating your admin account, set `SIGNUPS_ALLOWED=false` to prevent unauthorized registrations.
+</Warning>
+
+### Nextcloud
+
+Nextcloud provides a complete cloud platform for files, calendar, contacts, and collaboration:
+
+```yaml
+services:
+  nextcloud:
+    image: nextcloud:latest
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+      - db
+    environment:
+      - POSTGRES_HOST=db
+      - POSTGRES_DB=nextcloud
+      - POSTGRES_USER=nextcloud
+      - POSTGRES_PASSWORD=your-secure-password
+    volumes:
+      - ./nextcloud:/var/www/html
+
+  db:
+    image: postgres:alpine
+    environment:
+      - POSTGRES_DB=nextcloud
+      - POSTGRES_USER=nextcloud
+      - POSTGRES_PASSWORD=your-secure-password
+    volumes:
+      - ./db:/var/lib/postgresql/data
+
+  tailscale:
+    image: tailscale/tailscale:latest
+    environment:
+      - TS_AUTHKEY=tskey-auth-xxxxx
+      - TS_STATE_DIR=/var/lib/tailscale
+    volumes:
+      - ./ts-state:/var/lib/tailscale
+```
+
+## Use Cases
+
+- **Password management** with Vaultwarden
+- **Cloud storage and sync** with Nextcloud or Resilio Sync
+- **Note-taking** with Haptic, Flatnotes, Nanote, or Karakeep
+- **Task management** with Donetick, DumbDo, or Eigenfocus
+- **Team collaboration** with Mattermost or Docmost
+- **Blogging and publishing** with Ghost
+- **PDF management** with Stirling-PDF or BentoPDF
+- **Bookmark management** with Linkding
+- **Subscription tracking** with Wallos or Subtrackr
+- **Git hosting** with Forgejo
+- **Whiteboarding** with Excalidraw
+- **Forms and surveys** with Formbricks
+
+## Links
+
+All service configurations are available in the [ScaleTail GitHub repository](https://github.com/tailscale-dev/ScaleTail/tree/main/services).

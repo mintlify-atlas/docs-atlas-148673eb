@@ -1,0 +1,152 @@
+---
+title: 'Utilities'
+description: 'General purpose utilities and specialized tools'
+icon: 'wrench'
+---
+
+## Overview
+
+This category includes 13 utility services covering a wide range of use cases, from notifications and secret sharing to vehicle maintenance tracking and QR code generation. These are the miscellaneous but highly useful services that don't fit into other categories.
+
+## Available Services
+
+| Service | Description |
+| ------- | ----------- |
+| **ConvertX** | A fast, full-featured self-hosted conversion API for images, docs, videos, and more |
+| **Gotify** | A simple server for sending and receiving messages in real-time |
+| **Hemmelig** | A self-hosted, zero-knowledge encrypted secret sharing platform with expiring secrets |
+| **Homebox** | A self-hosted home inventory and asset management system |
+| **LubeLogger** | Self-hosted vehicle maintenance tracker with private access |
+| **Mealie** | A self-hosted recipe manager and meal planner with features like shopping lists, scaling, and importing |
+| **Mini-QR** | A minimal, self-hosted QR code generator with a mobile-friendly UI |
+| **ntfy** | A simple HTTP-based pub/sub notification service for sending push notifications |
+| **Tandoor Recipes** | A self-hosted recipe manager that also serves as a meal planner that has features such as nutrient tracking, shopping lists, importing and AI |
+| **Tracktor** | Self-hosted vehicle maintenance tracker |
+
+<Note>
+Mealie and Tandoor Recipes are also listed in the "Food & Wellness" category in the README.
+</Note>
+
+## Featured Services
+
+<CardGroup cols={2}>
+  <Card title="ntfy" icon="bell" href="https://github.com/tailscale-dev/ScaleTail/tree/main/services/ntfy">
+    Simple push notifications for scripts and services
+  </Card>
+  <Card title="Gotify" icon="message" href="https://github.com/tailscale-dev/ScaleTail/tree/main/services/gotify">
+    Real-time messaging and notification server
+  </Card>
+  <Card title="Homebox" icon="box" href="https://github.com/tailscale-dev/ScaleTail/tree/main/services/homebox">
+    Track your home inventory and assets
+  </Card>
+  <Card title="Mealie" icon="utensils" href="https://github.com/tailscale-dev/ScaleTail/tree/main/services/mealie">
+    Recipe manager with meal planning
+  </Card>
+</CardGroup>
+
+## Quick Setup Example
+
+### ntfy
+
+ntfy is a simple HTTP-based notification service perfect for scripts and automation:
+
+```yaml
+services:
+  ntfy:
+    image: binwiederhier/ntfy:latest
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+    command:
+      - serve
+    volumes:
+      - ./ntfy-cache:/var/cache/ntfy
+      - ./ntfy-etc:/etc/ntfy
+
+  tailscale:
+    image: tailscale/tailscale:latest
+    environment:
+      - TS_AUTHKEY=tskey-auth-xxxxx
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_SERVE_CONFIG=/config/serve-config.json
+    volumes:
+      - ./ts-state:/var/lib/tailscale
+      - ./serve-config.json:/config/serve-config.json
+```
+
+**Send a notification:**
+```bash
+curl -d "Backup completed successfully" https://ntfy.your-tailnet.ts.net/backups
+```
+
+<Tip>
+ntfy has mobile apps for iOS and Android, making it easy to receive notifications anywhere.
+</Tip>
+
+### Homebox
+
+Homebox helps you track your home inventory, warranties, and assets:
+
+```yaml
+services:
+  homebox:
+    image: ghcr.io/hay-kot/homebox:latest
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+    environment:
+      - HBOX_LOG_LEVEL=info
+      - HBOX_WEB_MAX_UPLOAD_SIZE=10
+    volumes:
+      - ./homebox-data:/data
+
+  tailscale:
+    image: tailscale/tailscale:latest
+    environment:
+      - TS_AUTHKEY=tskey-auth-xxxxx
+      - TS_STATE_DIR=/var/lib/tailscale
+    volumes:
+      - ./ts-state:/var/lib/tailscale
+```
+
+## Use Cases by Service
+
+<AccordionGroup>
+  <Accordion title="Notifications & Messaging">
+    - **ntfy**: HTTP-based push notifications for scripts, cron jobs, and automation
+    - **Gotify**: Real-time messaging with WebSocket support and mobile apps
+  </Accordion>
+
+  <Accordion title="Home & Lifestyle">
+    - **Homebox**: Track home inventory, purchases, warranties, and asset locations
+    - **LubeLogger** or **Tracktor**: Maintain vehicle service records and maintenance schedules
+    - **Mealie** or **Tandoor Recipes**: Manage recipes, plan meals, and generate shopping lists
+  </Accordion>
+
+  <Accordion title="Security & Privacy">
+    - **Hemmelig**: Share secrets and passwords securely with expiration and encryption
+  </Accordion>
+
+  <Accordion title="Tools & Utilities">
+    - **ConvertX**: Convert files between formats (images, documents, videos)
+    - **Mini-QR**: Generate QR codes quickly for links, WiFi, contacts, etc.
+  </Accordion>
+</AccordionGroup>
+
+## Recipe Management Comparison
+
+Both Mealie and Tandoor Recipes are excellent recipe managers:
+
+| Feature | Mealie | Tandoor Recipes |
+| ------- | ------ | --------------- |
+| Recipe Import | ✅ | ✅ |
+| Meal Planning | ✅ | ✅ |
+| Shopping Lists | ✅ | ✅ |
+| Recipe Scaling | ✅ | ✅ |
+| Nutrient Tracking | ❌ | ✅ |
+| AI Features | ❌ | ✅ |
+| Mobile Apps | ✅ | Limited |
+
+## Links
+
+All service configurations are available in the [ScaleTail GitHub repository](https://github.com/tailscale-dev/ScaleTail/tree/main/services).

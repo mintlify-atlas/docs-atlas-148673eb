@@ -1,80 +1,220 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Deploy your first service with Tailscale sidecar in minutes
 ---
 
-## Get started in three steps
+This guide walks you through deploying Jellyfin, a self-hosted media server, with Tailscale sidecar configuration. You'll have a secure, Tailnet-accessible service running in under 10 minutes.
 
-Get your documentation site running locally and make your first customization.
+## Prerequisites
 
-### Step 1: Set up your local environment
+Before you begin, ensure you have:
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
+<Steps>
+  <Step title="Tailscale account">
+    Create a free account at [tailscale.com](https://tailscale.com) if you don't have one already.
+  </Step>
+
+  <Step title="Generate an auth key">
+    Navigate to [Tailscale Admin Console](https://login.tailscale.com/admin/settings/keys) and generate an auth key:
+    - Mark it as **Reusable** if you plan to deploy multiple services
+    - Set an appropriate expiration time (or never expire)
+    - Save the key securely - you'll need it in the next step
+  </Step>
+
+  <Step title="Docker installed">
+    Verify Docker and Docker Compose are installed:
+    ```bash
+    docker --version
+    docker compose version
+    ```
+    If not installed, follow the [official Docker installation guide](https://docs.docker.com/engine/install/).
+  </Step>
+</Steps>
+
+## Deploy Jellyfin with Tailscale
+
+<Steps>
+  <Step title="Clone the repository">
+    Get the ScaleTail repository with all service configurations:
+    ```bash
+    git clone https://github.com/tailscale-dev/ScaleTail.git
+    cd ScaleTail/services/jellyfin
+    ```
+  </Step>
+
+  <Step title="Configure environment variables">
+    Create a `.env` file with your configuration:
+    ```bash .env
+    # Tailscale Configuration
+    TS_AUTHKEY=tskey-auth-xxxxxxxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    TS_CERT_DOMAIN=jellyfin.tail1234.ts.net
     
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
+    # Service Configuration
+    SERVICE=jellyfin
+    IMAGE_URL=lscr.io/linuxserver/jellyfin:latest
     
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+    # Optional: DNS Server
+    # DNS_SERVER=1.1.1.1
+    ```
 
-### Step 2: Deploy your changes
+    <Note>
+      Replace `TS_AUTHKEY` with your actual Tailscale auth key. The `TS_CERT_DOMAIN` will be your Tailscale hostname once the service is running.
+    </Note>
+  </Step>
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+  <Step title="Create required directories">
+    Create directories for Jellyfin media and configuration:
+    ```bash
+    mkdir -p jellyfin-data/config
+    mkdir -p media/movies media/tvseries
+    ```
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+    <Info>
+      Add your media files to `media/movies` and `media/tvseries` directories. You can do this before or after starting the service.
+    </Info>
+  </Step>
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+  <Step title="Start the services">
+    Launch both Tailscale and Jellyfin containers:
+    ```bash
+    docker compose up -d
+    ```
 
-### Step 3: Go live
+    Check that both containers are running:
+    ```bash
+    docker compose ps
+    ```
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+    You should see both `tailscale-jellyfin` and `app-jellyfin` with status "Up" and "healthy".
+  </Step>
 
-## Next steps
+  <Step title="Verify the deployment">
+    Check the Tailscale container logs to confirm connection:
+    ```bash
+    docker compose logs tailscale
+    ```
 
-Now that you have your docs running, explore these key features:
+    Look for a message indicating successful connection to your Tailnet and the assigned hostname.
+  </Step>
+</Steps>
+
+## Access Your Service
+
+<Steps>
+  <Step title="Find your Tailscale hostname">
+    Your service is accessible at `https://jellyfin.tail-scale.ts.net:443` (replace with your actual Tailnet name).
+
+    You can also check the [Tailscale Admin Console](https://login.tailscale.com/admin/machines) to see your new device and its hostname.
+  </Step>
+
+  <Step title="Complete Jellyfin setup">
+    Open your browser and navigate to your Jellyfin Tailscale URL. You'll see the Jellyfin setup wizard:
+    - Select your preferred language
+    - Create an admin account
+    - Add your media libraries (pointing to `/data/movies` and `/data/tvshows`)
+    - Configure any additional settings
+  </Step>
+
+  <Step title="Access from any device">
+    Install Tailscale on your phone, tablet, or other computers. Once connected to your Tailnet, you can access Jellyfin from anywhere using the same Tailscale URL.
+  </Step>
+</Steps>
+
+<Warning>
+  By default, your service is only accessible within your Tailnet (private network). To expose it publicly, you would need to enable Tailscale Funnel by setting `"AllowFunnel"` to `true` in the serve configuration.
+</Warning>
+
+## Understanding the Configuration
+
+Here's what the Jellyfin Docker Compose file does:
+
+```yaml
+services:
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: tailscale-jellyfin
+    hostname: jellyfin
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY}
+      - TS_SERVE_CONFIG=/config/serve.json
+      - TS_ENABLE_HEALTH_CHECK=true
+    volumes:
+      - ./config:/config
+      - ./ts/state:/var/lib/tailscale
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - net_admin
+
+  application:
+    image: lscr.io/linuxserver/jellyfin:latest
+    network_mode: service:tailscale  # Routes through Tailscale
+    container_name: app-jellyfin
+    volumes:
+      - ./jellyfin-data/config:/config
+      - ./media/movies:/data/movies
+      - ./media/tvseries:/data/tvshows
+    depends_on:
+      tailscale:
+        condition: service_healthy
+```
+
+Key points:
+- **Tailscale container**: Manages the secure network connection
+- **Application container**: Runs Jellyfin using Tailscale's network via `network_mode: service:tailscale`
+- **Health checks**: Ensures Tailscale is ready before starting Jellyfin
+- **Serve configuration**: Exposes Jellyfin on port 8096 through Tailscale HTTPS
+
+## Next Steps
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Explore Core Concepts" icon="book" href="/concepts">
+    Learn about Tailscale sidecars, Serve vs Funnel, and how the network stack works
+  </Card>
+  
+  <Card title="Browse More Services" icon="grid" href="/services/overview">
+    Discover 95+ pre-configured services you can deploy with Tailscale
+  </Card>
+  
+  <Card title="Configuration Guide" icon="wrench" href="/configuration/environment-variables">
+    Modify environment variables, health checks, and serve configurations
+  </Card>
+  
+  <Card title="Deployment Guide" icon="layer-group" href="/deployment/docker-compose">
+    Run multiple services on the same host with Docker Compose
+  </Card>
 </CardGroup>
 
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>
+## Troubleshooting
+
+<Accordion title="Container shows as unhealthy">
+  Check the health check logs:
+  ```bash
+  docker inspect --format='{{json .State.Health}}' tailscale-jellyfin
+  ```
+
+  Common issues:
+  - Invalid `TS_AUTHKEY` - generate a new key
+  - TUN device not available - ensure `/dev/net/tun` exists
+  - Network connectivity issues - check your internet connection
+</Accordion>
+
+<Accordion title="Cannot access service from other devices">
+  Verify:
+  - Other devices are connected to the same Tailnet
+  - The Tailscale container shows as "healthy"
+  - You're using the correct Tailscale hostname
+  - Tailscale Serve is configured correctly (check `compose.yaml` configs section)
+</Accordion>
+
+<Accordion title="Jellyfin doesn't see media files">
+  Check volume mappings:
+  ```bash
+  docker compose exec application ls -la /data/movies
+  docker compose exec application ls -la /data/tvshows
+  ```
+
+  Ensure:
+  - Media files exist in `./media/movies` and `./media/tvseries` on your host
+  - File permissions allow the container to read them (PUID=1000, PGID=1000)
+</Accordion>

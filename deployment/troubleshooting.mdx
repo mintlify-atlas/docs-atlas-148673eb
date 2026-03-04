@@ -1,0 +1,437 @@
+---
+title: Troubleshooting
+description: Common issues and solutions for ScaleTail deployments
+---
+
+This guide covers common issues you might encounter when deploying ScaleTail services and how to resolve them.
+
+## Service not appearing in Tailscale admin console
+
+<Accordion title="Symptoms and diagnosis">
+  The service container starts but doesn't appear in your Tailscale admin console.
+  
+  **Check Tailscale logs**:
+  ```bash
+  docker logs tailscale-servicename
+  ```
+  
+  **Verify Tailscale status**:
+  ```bash
+  docker exec tailscale-servicename tailscale status
+  ```
+</Accordion>
+
+<Accordion title="Solution: Invalid auth key">
+  **Cause**: The `TS_AUTHKEY` is invalid, expired, or already used (without reusable flag).
+  
+  **Fix**:
+  1. Generate a new auth key in the [Tailscale admin console](https://login.tailscale.com/admin/settings/keys)
+  2. Enable the **Reusable** option
+  3. Update your `.env` file:
+     ```bash
+     TS_AUTHKEY=tskey-auth-xxxxxxxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+     ```
+  4. Restart the service:
+     ```bash
+     docker compose down
+     docker compose up -d
+     ```
+</Accordion>
+
+<Accordion title="Solution: /dev/net/tun not available">
+  **Cause**: The `/dev/net/tun` device isn't available on the host.
+  
+  **Verify device exists**:
+  ```bash
+  ls -l /dev/net/tun
+  ```
+  
+  **Fix for Linux**:
+  ```bash
+  # Load the tun module
+  sudo modprobe tun
+  
+  # Make it persistent across reboots
+  echo "tun" | sudo tee -a /etc/modules
+  ```
+  
+  **Fix for WSL2**:
+  ```powershell
+  # In PowerShell (run as Administrator)
+  wsl --install
+  wsl --update
+  ```
+  
+  Then restart WSL:
+  ```bash
+  wsl --shutdown
+  ```
+</Accordion>
+
+## Health check failures
+
+<Accordion title="Tailscale health check failing">
+  **Symptoms**: Tailscale container marked as unhealthy
+  
+  **Test the health endpoint**:
+  ```bash
+  docker exec tailscale-servicename wget -O- http://127.0.0.1:41234/healthz
+  ```
+  
+  **Expected output**:
+  ```json
+  {"healthy":true}
+  ```
+  
+  **Common fixes**:
+  - Verify `TS_ENABLE_HEALTH_CHECK=true` is set
+  - Verify `TS_LOCAL_ADDR_PORT=127.0.0.1:41234` is set
+  - Check Tailscale has authenticated:
+    ```bash
+    docker exec tailscale-servicename tailscale status
+    ```
+  - Wait for the `start_period` to elapse (default 10s)
+</Accordion>
+
+<Accordion title="Application health check failing">
+  **Symptoms**: Application container marked as unhealthy
+  
+  **Debug the health check**:
+  ```bash
+  # Run the health check command manually
+  docker exec app-servicename pgrep -f servicename
+  
+  # Check application logs
+  docker logs app-servicename
+  ```
+  
+  **Common fixes**:
+  - Increase `start_period` for slow-starting services:
+    ```yaml
+    healthcheck:
+      start_period: 60s
+    ```
+  - Verify the process name matches the health check command
+  - Check if the application requires additional configuration before starting
+</Accordion>
+
+## DNS resolution issues
+
+<Accordion title="Cannot resolve .ts.net domains">
+  **Symptoms**: Cannot access service via MagicDNS hostname (`servicename.your-tailnet.ts.net`)
+  
+  **Solution**:
+  1. Enable MagicDNS in your Tailscale admin console
+  2. Add `TS_ACCEPT_DNS=true` to your Tailscale container:
+     ```yaml
+     tailscale:
+       environment:
+         - TS_ACCEPT_DNS=true
+     ```
+  3. Restart the service:
+     ```bash
+     docker compose restart tailscale
+     ```
+</Accordion>
+
+<Accordion title="DNS resolution inside containers">
+  **Symptoms**: Application container cannot resolve external domains
+  
+  **Solution**: Add a DNS server to your compose.yaml:
+  ```yaml
+  tailscale:
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+  ```
+  
+  Or use your `.env` file:
+  ```bash
+  DNS_SERVER=1.1.1.1
+  ```
+  
+  Then in compose.yaml:
+  ```yaml
+  tailscale:
+    dns:
+      - ${DNS_SERVER}
+  ```
+</Accordion>
+
+## Network connectivity problems
+
+<Accordion title="Service accessible locally but not via Tailscale">
+  **Symptoms**: Can access service via `localhost` but not via Tailscale IP
+  
+  **Verify Tailscale connectivity**:
+  ```bash
+  # Get the Tailscale IP
+  docker exec tailscale-servicename tailscale ip -4
+  
+  # From another device on your Tailnet, ping the service
+  ping 100.x.x.x
+  ```
+  
+  **Check Serve configuration**:
+  ```bash
+  # Verify Serve is configured
+  docker exec tailscale-servicename tailscale serve status
+  ```
+  
+  **Verify serve.json configuration**:
+  ```yaml
+  configs:
+    ts-serve:
+      content: |
+        {"TCP":{"443":{"HTTPS":true}},
+        "Web":{"${TS_CERT_DOMAIN}:443":
+            {"Handlers":{"/":
+            {"Proxy":"http://127.0.0.1:8096"}}}},  # Verify port matches your service
+        "AllowFunnel":{"${TS_CERT_DOMAIN}:443":false}}
+  ```
+</Accordion>
+
+<Accordion title="Cannot access service from internet (Funnel)">
+  **Symptoms**: Funnel enabled but service not accessible publicly
+  
+  **Verify Funnel is enabled**:
+  1. Check `AllowFunnel` in serve.json:
+     ```json
+     "AllowFunnel":{"${TS_CERT_DOMAIN}:443":true}
+     ```
+  2. Enable Funnel in the admin console
+  3. Restart the service:
+     ```bash
+     docker compose restart tailscale
+     ```
+  
+  **Test Funnel status**:
+  ```bash
+  docker exec tailscale-servicename tailscale funnel status
+  ```
+</Accordion>
+
+## Permission errors
+
+<Accordion title="Permission denied on volume mounts">
+  **Symptoms**: Application cannot write to mounted volumes
+  
+  **Error in logs**:
+  ```
+  Permission denied: '/config/settings.json'
+  ```
+  
+  **Solution**: Fix directory ownership:
+  ```bash
+  # Stop the service
+  docker compose down
+  
+  # Fix ownership (use your user ID)
+  sudo chown -R $USER:$USER ./servicename-data
+  
+  # Set proper permissions
+  chmod -R 755 ./servicename-data
+  
+  # Restart the service
+  docker compose up -d
+  ```
+  
+  **For PUID/PGID services**:
+  ```bash
+  # Find your user and group IDs
+  id
+  
+  # Add to .env file
+  echo "PUID=$(id -u)" >> .env
+  echo "PGID=$(id -g)" >> .env
+  
+  # Restart
+  docker compose up -d
+  ```
+</Accordion>
+
+<Accordion title="Docker socket permission denied">
+  **Symptoms**: Cannot connect to Docker daemon
+  
+  **Error**:
+  ```
+  permission denied while trying to connect to the Docker daemon socket
+  ```
+  
+  **Solution**:
+  ```bash
+  # Add your user to the docker group
+  sudo usermod -aG docker $USER
+  
+  # Log out and back in for changes to take effect
+  # Or run:
+  newgrp docker
+  
+  # Verify
+  docker ps
+  ```
+</Accordion>
+
+## Port binding conflicts
+
+<Accordion title="Port already in use">
+  **Symptoms**: Cannot start service due to port conflict
+  
+  **Error**:
+  ```
+  Error starting userland proxy: listen tcp 0.0.0.0:8096: bind: address already in use
+  ```
+  
+  **Find the conflicting process**:
+  ```bash
+  # Linux
+  sudo lsof -i :8096
+  
+  # Or with netstat
+  sudo netstat -tulpn | grep :8096
+  ```
+  
+  **Solution**: Either:
+  1. Stop the conflicting service
+  2. Change the port in your compose.yaml
+  3. Comment out the ports section if you only need Tailscale access:
+     ```yaml
+     #ports:
+     #  - 0.0.0.0:${SERVICEPORT}:${SERVICEPORT}
+     ```
+</Accordion>
+
+## Configuration issues
+
+<Accordion title="Environment variables not substituted">
+  **Symptoms**: Variables like `${SERVICE}` appear literally in container names
+  
+  **Verify .env file exists**:
+  ```bash
+  ls -la .env
+  cat .env
+  ```
+  
+  **Validate configuration**:
+  ```bash
+  # Check if variables are substituted
+  docker compose config | grep container_name
+  ```
+  
+  **Solution**: Ensure `.env` file is in the same directory as `compose.yaml`
+</Accordion>
+
+<Accordion title="serve.json not loading">
+  **Symptoms**: Tailscale Serve not working, service not accessible on port 443
+  
+  **Check if serve.json is mounted**:
+  ```bash
+  docker exec tailscale-servicename cat /config/serve.json
+  ```
+  
+  **Verify TS_SERVE_CONFIG is set**:
+  ```bash
+  docker exec tailscale-servicename env | grep TS_SERVE_CONFIG
+  ```
+  
+  **Expected output**:
+  ```
+  TS_SERVE_CONFIG=/config/serve.json
+  ```
+  
+  **Solution**: Verify the configs section in compose.yaml:
+  ```yaml
+  configs:
+    ts-serve:
+      content: |
+        {"TCP":{"443":{"HTTPS":true}}, ...}
+  
+  services:
+    tailscale:
+      configs:
+        - source: ts-serve
+          target: /config/serve.json
+  ```
+</Accordion>
+
+## Resource issues
+
+<Accordion title="Out of memory errors">
+  **Symptoms**: Container crashes or OOM (Out of Memory) errors in logs
+  
+  **Add memory limits**:
+  ```yaml
+  services:
+    application:
+      deploy:
+        resources:
+          limits:
+            memory: 4G
+          reservations:
+            memory: 2G
+  ```
+</Accordion>
+
+<Accordion title="Disk space issues">
+  **Symptoms**: Cannot write files, containers failing to start
+  
+  **Check disk usage**:
+  ```bash
+  df -h
+  docker system df
+  ```
+  
+  **Clean up Docker resources**:
+  ```bash
+  # Remove unused containers, networks, images
+  docker system prune -a
+  
+  # Remove unused volumes (CAREFUL - this deletes data)
+  docker volume prune
+  ```
+</Accordion>
+
+## Getting help
+
+<CardGroup cols={2}>
+  <Card title="GitHub Issues" icon="github" href="https://github.com/tailscale-dev/ScaleTail/issues">
+    Report bugs or request features
+  </Card>
+  <Card title="Tailscale Support" icon="headset" href="https://tailscale.com/contact/support">
+    Get help with Tailscale-specific issues
+  </Card>
+  <Card title="Community" icon="users" href="https://github.com/tailscale-dev/ScaleTail/discussions">
+    Ask questions and share experiences
+  </Card>
+  <Card title="Documentation" icon="book" href="/quickstart">
+    Review the quickstart guide
+  </Card>
+</CardGroup>
+
+## Diagnostic commands
+
+Use these commands to gather information when troubleshooting:
+
+```bash
+# Docker and system info
+docker --version
+docker compose version
+uname -a
+
+# Container status
+docker compose ps
+docker compose logs --tail=100
+
+# Tailscale status
+docker exec tailscale-servicename tailscale status
+docker exec tailscale-servicename tailscale ip
+
+# Network connectivity
+docker exec tailscale-servicename ping -c 3 8.8.8.8
+docker exec tailscale-servicename nslookup google.com
+
+# Resource usage
+docker stats --no-stream
+df -h
+free -h
+```

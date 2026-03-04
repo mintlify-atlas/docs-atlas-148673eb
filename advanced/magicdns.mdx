@@ -1,0 +1,330 @@
+---
+title: 'MagicDNS'
+description: 'Use MagicDNS to access services by hostname instead of IP addresses'
+icon: 'wand-magic-sparkles'
+---
+
+## Overview
+
+MagicDNS is Tailscale's automatic DNS configuration feature that allows you to access devices and services on your tailnet using simple hostnames instead of IP addresses. When enabled, you can connect to services using names like `service-name` instead of `100.x.y.z`.
+
+Benefits of MagicDNS:
+- Access services using memorable hostnames
+- Automatic DNS updates when IPs change
+- Split DNS support for accessing both tailnet and internet resources
+- HTTPS certificate integration with Tailscale's certificate authority
+
+## Enabling MagicDNS
+
+### Network-Wide Configuration
+
+1. Navigate to the [Tailscale DNS settings](https://login.tailscale.com/admin/dns)
+2. Click "Enable MagicDNS"
+3. Optionally configure a custom domain suffix (e.g., `tail1234.ts.net`)
+
+### Per-Service Configuration
+
+Once MagicDNS is enabled on your network, configure individual services to use it:
+
+```yaml
+services:
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: tailscale-${SERVICE}
+    hostname: ${SERVICE}
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY}
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_ACCEPT_DNS=true  # Enable MagicDNS
+      - TS_USERSPACE=false
+      - TS_AUTH_ONCE=true
+    volumes:
+      - ./ts/state:/var/lib/tailscale
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - net_admin
+    restart: always
+```
+
+### TS_ACCEPT_DNS Configuration
+
+The `TS_ACCEPT_DNS` environment variable controls whether the Tailscale container accepts DNS configuration from your tailnet:
+
+```yaml
+environment:
+  - TS_ACCEPT_DNS=true
+```
+
+**When enabled:**
+- The container uses MagicDNS for hostname resolution
+- Services can be accessed via their Tailscale hostnames
+- DNS queries are split between tailnet and internet domains
+
+**When disabled (default):**
+- The container uses the system's default DNS
+- Manual DNS configuration may be required
+
+<Info>
+In the service template and exit node configurations, `TS_ACCEPT_DNS=true` is commented out by default. Uncomment it when you want to use MagicDNS:
+
+```yaml
+#- TS_ACCEPT_DNS=true # Uncomment when using MagicDNS
+```
+</Info>
+
+## Using MagicDNS with Services
+
+### Accessing Services by Hostname
+
+Once configured, access your services using their hostname:
+
+```bash
+# Instead of: http://100.64.1.5:8080
+curl http://service-name:8080
+
+# Or with your tailnet domain:
+curl http://service-name.tail1234.ts.net:8080
+```
+
+### HTTPS with MagicDNS
+
+Combine MagicDNS with Tailscale's HTTPS certificates for secure access:
+
+```yaml
+services:
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: tailscale-${SERVICE}
+    hostname: ${SERVICE}
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY}
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_ACCEPT_DNS=true
+      - TS_CERT_DOMAIN=${TS_CERT_DOMAIN}  # e.g., service-name.tail1234.ts.net
+      - TS_USERSPACE=false
+    volumes:
+      - ./ts/state:/var/lib/tailscale
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - net_admin
+    restart: always
+```
+
+Access via HTTPS:
+```bash
+curl https://service-name.tail1234.ts.net
+```
+
+## DNS Configuration Patterns
+
+### Pattern 1: MagicDNS Only
+
+Use Tailscale's DNS exclusively:
+
+```yaml
+environment:
+  - TS_ACCEPT_DNS=true
+# No custom dns: section
+```
+
+### Pattern 2: MagicDNS with Fallback
+
+Use MagicDNS but specify custom DNS servers as fallback:
+
+```yaml
+environment:
+  - TS_ACCEPT_DNS=true
+dns:
+  - ${DNS_SERVER}  # e.g., 1.1.1.1 or 8.8.8.8
+```
+
+<Info>
+The exit node example uses this pattern to ensure DNS resolution works even if MagicDNS is not configured.
+</Info>
+
+### Pattern 3: Custom DNS Only
+
+Bypass MagicDNS and use specific DNS servers:
+
+```yaml
+environment:
+  - TS_ACCEPT_DNS=false
+dns:
+  - 1.1.1.1
+  - 1.0.0.1
+```
+
+## Split DNS Configuration
+
+Configure custom DNS resolvers for specific domains in your Tailscale admin console:
+
+### Example: Internal Domain Resolution
+
+1. Go to [DNS settings](https://login.tailscale.com/admin/dns)
+2. Under "Nameservers", add a custom resolver:
+   - Domain: `internal.company.com`
+   - Nameserver: `100.64.1.10` (your internal DNS server)
+3. Queries for `*.internal.company.com` will route to your internal DNS
+4. All other queries use MagicDNS or public DNS
+
+### Docker Compose Integration
+
+```yaml
+services:
+  # Internal DNS server
+  internal-dns:
+    image: coredns/coredns:latest
+    network_mode: service:tailscale
+    depends_on:
+      tailscale:
+        condition: service_healthy
+    volumes:
+      - ./Corefile:/etc/coredns/Corefile
+
+  tailscale:
+    image: tailscale/tailscale:latest
+    hostname: dns-server
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY}
+      - TS_ACCEPT_DNS=true
+    volumes:
+      - ./ts/state:/var/lib/tailscale
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - net_admin
+    restart: always
+```
+
+## Troubleshooting
+
+### Hostnames Not Resolving
+
+**Check MagicDNS is enabled:**
+```bash
+tailscale status --json | grep MagicDNSSuffix
+```
+
+**Verify TS_ACCEPT_DNS:**
+```bash
+docker exec tailscale-${SERVICE} env | grep TS_ACCEPT_DNS
+```
+
+**Test DNS resolution inside the container:**
+```bash
+docker exec tailscale-${SERVICE} nslookup other-service
+```
+
+### DNS Resolution Conflicts
+
+**Problem:** System DNS conflicts with Tailscale DNS
+
+**Solution:** Use the `dns:` section to explicitly set DNS servers:
+
+```yaml
+dns:
+  - 1.1.1.1
+  - 1.0.0.1
+```
+
+### Service-to-Service DNS
+
+**Problem:** Containers can't resolve each other's MagicDNS names
+
+**Solution:** Ensure both containers have `TS_ACCEPT_DNS=true` and are on the same tailnet:
+
+```yaml
+services:
+  service-a:
+    # ... tailscale configuration with TS_ACCEPT_DNS=true
+  
+  service-b:
+    # ... tailscale configuration with TS_ACCEPT_DNS=true
+```
+
+### DNS Leaks
+
+When using exit nodes, verify DNS queries route through the exit node:
+
+```bash
+# Should show exit node's DNS resolver
+curl https://dnsleaktest.com
+```
+
+If DNS is leaking:
+
+```yaml
+environment:
+  - TS_ACCEPT_DNS=true  # Force use of tailnet DNS
+# Remove custom dns: section
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use descriptive hostnames">
+    Choose service hostnames that clearly identify their purpose:
+    - `plex-server` instead of `server1`
+    - `home-assistant` instead of `ha`
+    - `monitoring-grafana` instead of `grafana`
+  </Accordion>
+
+  <Accordion title="Enable MagicDNS globally">
+    Enable MagicDNS at the network level rather than per-device for consistency across all services.
+  </Accordion>
+
+  <Accordion title="Document DNS configuration">
+    When using split DNS or custom resolvers, document the configuration in your service README:
+    ```markdown
+    ## DNS Configuration
+    - Internal domain: `*.internal.company.com` → `100.64.1.10`
+    - All other queries use MagicDNS
+    ```
+  </Accordion>
+
+  <Accordion title="Test DNS resolution">
+    Always test DNS resolution after deploying a service:
+    ```bash
+    # From another device on your tailnet
+    ping service-name
+    nslookup service-name
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Examples from ScaleTail
+
+Both the service template and exit node configurations include MagicDNS support as a commented option:
+
+**From `/source/services/tailscale-exit-node/compose.yaml`:**
+```yaml
+environment:
+  #- TS_ACCEPT_DNS=true # Uncomment when using MagicDNS
+```
+
+**From `/source/templates/service-template/compose.yaml`:**
+```yaml
+environment:
+  #- TS_ACCEPT_DNS=true # Uncomment when using MagicDNS
+```
+
+Simply uncomment this line and restart the service to enable MagicDNS.
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Exit Nodes" icon="route" href="/advanced/exit-nodes">
+    Route traffic through your network
+  </Card>
+  <Card title="Custom Services" icon="wrench" href="/advanced/custom-services">
+    Create your own service configurations
+  </Card>
+</CardGroup>
+
+## Additional Reading
+
+- [Tailscale MagicDNS Documentation](https://tailscale.com/kb/1081/magicdns)
+- [HTTPS Certificates](https://tailscale.com/kb/1153/enabling-https)
+- [Split DNS](https://tailscale.com/kb/1054/dns)

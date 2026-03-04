@@ -1,0 +1,592 @@
+---
+title: 'Custom Services'
+description: 'Create custom service configurations using the ScaleTail template'
+icon: 'wrench'
+---
+
+## Overview
+
+ScaleTail provides a standardized template for creating custom service configurations with Tailscale sidecar containers. This template ensures consistency, maintainability, and easy migration from existing Docker Compose stacks.
+
+The sidecar pattern allows any containerized service to securely connect to your Tailscale network without modifying the application container itself.
+
+## Quick Start
+
+Create a new custom service in three steps:
+
+1. Copy the template
+2. Update the configuration
+3. Deploy the stack
+
+```bash
+# 1. Copy template
+cp -r templates/service-template services/my-service
+cd services/my-service
+
+# 2. Edit compose.yaml and .env
+vim compose.yaml
+vim .env
+
+# 3. Deploy
+docker compose up -d
+```
+
+## Service Template Structure
+
+The template provides a complete Docker Compose configuration with Tailscale sidecar:
+
+```yaml
+configs:
+  ts-serve:
+    content: |
+      {"TCP":{"443":{"HTTPS":true}},
+      "Web":{"${TS_CERT_DOMAIN}:443":
+          {"Handlers":{/":
+          {"Proxy":"http://127.0.0.1:80"}}}},
+      "AllowFunnel":{"${TS_CERT_DOMAIN}:443":false}}
+
+services:
+  # Tailscale Sidecar Configuration
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: tailscale-${SERVICE}
+    hostname: ${SERVICE}
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY}
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_SERVE_CONFIG=/config/serve.json
+      - TS_USERSPACE=false
+      - TS_ENABLE_HEALTH_CHECK=true
+      - TS_LOCAL_ADDR_PORT=127.0.0.1:41234
+      #- TS_ACCEPT_DNS=true # Uncomment when using MagicDNS
+      - TS_AUTH_ONCE=true
+    configs:
+      - source: ts-serve
+        target: /config/serve.json
+    volumes:
+      - ./config:/config
+      - ./ts/state:/var/lib/tailscale
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - net_admin
+    #ports:
+    #  - 0.0.0.0:${SERVICEPORT}:${SERVICEPORT}
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:41234/healthz"]
+      interval: 1m
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: always
+
+  # Application
+  application:
+    image: ${IMAGE_URL}
+    network_mode: service:tailscale  # Sidecar pattern
+    container_name: app-${SERVICE}
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Amsterdam
+    volumes:
+      - ./${SERVICE}-data/app/config:/config
+    depends_on:
+      tailscale:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "${SERVICE}"]
+      interval: 1m
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: always
+```
+
+## Step-by-Step Configuration Guide
+
+### Step 1: Copy the Template
+
+Copy the service template to a new directory:
+
+```bash
+cp -r templates/service-template services/<service-name>
+cd services/<service-name>
+```
+
+### Step 2: Configure Environment Variables
+
+Create a `.env` file with your service-specific variables:
+
+```bash
+# Service Configuration
+SERVICE=my-service
+SERVICEPORT=8080
+IMAGE_URL=linuxserver/my-service:latest
+
+# Tailscale Configuration
+TS_AUTHKEY=tskey-auth-xxxxx-xxxxxxxxxxxxxxxx
+TS_CERT_DOMAIN=my-service.tail1234.ts.net
+
+# Optional DNS Configuration
+DNS_SERVER=1.1.1.1
+```
+
+<Warning>
+**Never commit real auth keys or secrets to version control.**
+
+Set `TS_AUTHKEY` and other sensitive values in `.env` and add `.env` to `.gitignore`.
+</Warning>
+
+### Step 3: Update Compose Configuration
+
+Modify `compose.yaml` based on your service requirements:
+
+#### Container Names
+
+Keep the standardized naming convention:
+
+```yaml
+tailscale:
+  container_name: tailscale-${SERVICE}
+
+application:
+  container_name: app-${SERVICE}
+```
+
+#### Network Mode (Critical)
+
+**Always keep the sidecar pattern:**
+
+```yaml
+application:
+  network_mode: service:tailscale  # Routes app through Tailscale
+  depends_on:
+    tailscale:
+      condition: service_healthy
+```
+
+<Info>
+The `network_mode: service:tailscale` configuration routes all application traffic through the Tailscale container, eliminating the need to modify the application itself.
+</Info>
+
+#### Tailscale Serve Configuration
+
+Update the proxy target port to match your application's internal port:
+
+```yaml
+configs:
+  ts-serve:
+    content: |
+      {"TCP":{"443":{"HTTPS":true}},
+      "Web":{"${TS_CERT_DOMAIN}:443":
+          {"Handlers":{/":
+          {"Proxy":"http://127.0.0.1:8080"}}}},  # Change port here
+      "AllowFunnel":{"${TS_CERT_DOMAIN}:443":false}}
+```
+
+<Warning>
+The Tailscale Serve config does **not** consume `.env` values automatically. You must manually update the port number in the JSON.
+</Warning>
+
+If you don't need Tailscale Serve/Funnel, remove the configuration:
+
+```yaml
+# Remove the entire configs: section
+
+# Remove from tailscale service:
+environment:
+  # - TS_SERVE_CONFIG=/config/serve.json  # Remove this line
+configs:  # Remove this section
+  - source: ts-serve
+    target: /config/serve.json
+```
+
+#### Volumes
+
+Adjust volume mounts for your service:
+
+```yaml
+application:
+  volumes:
+    - ./my-service-data/config:/config
+    - ./my-service-data/media:/media
+    - ./my-service-data/downloads:/downloads
+```
+
+**Best practice:** Pre-create bind-mount paths to avoid Docker creating root-owned folders:
+
+```bash
+mkdir -p my-service-data/{config,media,downloads}
+chown -R $(id -u):$(id -g) my-service-data
+```
+
+#### Devices and Capabilities
+
+If your service needs special hardware access, add devices explicitly:
+
+```yaml
+application:
+  devices:
+    - /dev/dri:/dev/dri        # GPU access
+    - /dev/fuse:/dev/fuse      # FUSE filesystem
+  group_add:
+    - "video"                   # Video group for GPU
+    - "render"                  # Render group for GPU
+```
+
+**Mention these requirements in your README** so users know they need specific hardware or group membership.
+
+#### Port Exposure (Optional)
+
+By default, ports are commented out to keep services Tailscale-only:
+
+```yaml
+#ports:
+#  - 0.0.0.0:${SERVICEPORT}:${SERVICEPORT}
+```
+
+**Uncomment only if LAN exposure is required** and explain why in the README:
+
+```yaml
+ports:
+  - 0.0.0.0:${SERVICEPORT}:${SERVICEPORT}  # Required for local device discovery
+```
+
+### Step 4: Health Checks
+
+Customize the application health check:
+
+```yaml
+application:
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+    interval: 1m
+    timeout: 10s
+    retries: 3
+    start_period: 30s
+```
+
+Common health check patterns:
+
+```yaml
+# HTTP endpoint
+test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+
+# Process check
+test: ["CMD", "pgrep", "-f", "my-service"]
+
+# TCP port check
+test: ["CMD", "nc", "-z", "localhost", "8080"]
+
+# Script check
+test: ["CMD", "/healthcheck.sh"]
+```
+
+### Step 5: Create Service README
+
+Document your service using the template structure:
+
+```markdown
+# My Service with Tailscale
+
+Brief description of the service and why Tailscale helps.
+
+## Prerequisites
+
+- User must be in the `docker` group
+- GPU access requires `video` and `render` groups
+- Service requires 2GB free disk space
+
+## Configuration
+
+1. Copy `.env.example` to `.env`
+2. Update `TS_AUTHKEY` with your Tailscale auth key
+3. Set `SERVICEPORT` to desired port (default: 8080)
+
+## Deployment
+
+```bash
+docker compose up -d
+```
+
+## Access
+
+- Via Tailscale: https://my-service.tail1234.ts.net
+- Via LAN (if ports enabled): http://192.168.1.x:8080
+
+## Gotchas
+
+- Initial admin setup requires accessing web UI
+- Default credentials: admin/admin (change immediately)
+- Config directory must be named exactly `config`
+- Requires specific group ID 1000 for file permissions
+
+## MagicDNS/HTTPS
+
+Uncomment `TS_ACCEPT_DNS=true` in compose.yaml to use MagicDNS.
+
+## Additional Resources
+
+- [Upstream Documentation](https://example.com/docs)
+- [Setup Video](https://example.com/video)
+```
+
+### Step 6: Validate Configuration
+
+Before deploying, validate your configuration:
+
+```bash
+# Check for syntax errors and missing variables
+docker compose config
+
+# If successful, you'll see the interpolated configuration
+# If errors, Docker will report missing variables or syntax issues
+```
+
+## Configuration Best Practices
+
+From the ScaleTail contributing guidelines (`CONTRIBUTING.md`):
+
+<AccordionGroup>
+  <Accordion title="Keep the sidecar pattern intact">
+    Always maintain:
+    - `network_mode: service:tailscale` in application container
+    - `depends_on` using Tailscale health check
+    - Health checks for both containers
+    
+    ```yaml
+    application:
+      network_mode: service:tailscale  # Never remove
+      depends_on:
+        tailscale:
+          condition: service_healthy   # Ensures Tailscale is ready
+    ```
+  </Accordion>
+
+  <Accordion title="Don't commit secrets">
+    Never commit to version control:
+    - Real auth keys (`TS_AUTHKEY`)
+    - Credentials
+    - `.env` files with real values
+    
+    Use `.env.example` with placeholder values instead.
+  </Accordion>
+
+  <Accordion title="Keep ports commented unless required">
+    Only expose ports to LAN if necessary:
+    ```yaml
+    #ports:  # Keep commented by default
+    #  - 0.0.0.0:${SERVICEPORT}:${SERVICEPORT}
+    ```
+    
+    Explain in README if you uncomment them.
+  </Accordion>
+
+  <Accordion title="Document all prerequisites">
+    In your README, list:
+    - Required user groups
+    - Hardware requirements (GPU, devices)
+    - Storage requirements
+    - Default credentials
+    - Initial setup steps
+    - Common gotchas
+  </Accordion>
+
+  <Accordion title="Use consistent naming">
+    Follow the naming conventions:
+    - Container: `tailscale-${SERVICE}` and `app-${SERVICE}`
+    - Hostname: `${SERVICE}`
+    - Volumes: `./${SERVICE}-data/`
+  </Accordion>
+</AccordionGroup>
+
+## Common Customization Patterns
+
+### Pattern 1: Simple Web Service
+
+Minimal configuration for a basic web app:
+
+```yaml
+services:
+  tailscale:
+    # ... standard tailscale config ...
+    
+  application:
+    image: nginx:latest
+    network_mode: service:tailscale
+    container_name: app-${SERVICE}
+    volumes:
+      - ./html:/usr/share/nginx/html:ro
+    depends_on:
+      tailscale:
+        condition: service_healthy
+    restart: always
+```
+
+### Pattern 2: Database Service
+
+Service with persistent data and no HTTP interface:
+
+```yaml
+services:
+  tailscale:
+    # ... standard tailscale config ...
+    # Remove TS_SERVE_CONFIG if no web interface
+    
+  application:
+    image: postgres:16
+    network_mode: service:tailscale
+    container_name: app-${SERVICE}
+    environment:
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_DB=${DB_NAME}
+    volumes:
+      - ./postgres-data:/var/lib/postgresql/data
+    depends_on:
+      tailscale:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${DB_USER}"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: always
+```
+
+### Pattern 3: Media Service with GPU
+
+Service requiring hardware acceleration:
+
+```yaml
+services:
+  tailscale:
+    # ... standard tailscale config ...
+    
+  application:
+    image: linuxserver/plex:latest
+    network_mode: service:tailscale
+    container_name: app-${SERVICE}
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - VERSION=docker
+    volumes:
+      - ./config:/config
+      - ./media:/media
+      - ./transcode:/transcode
+    devices:
+      - /dev/dri:/dev/dri  # Intel Quick Sync
+    group_add:
+      - video
+      - render
+    depends_on:
+      tailscale:
+        condition: service_healthy
+    restart: always
+```
+
+## Troubleshooting
+
+### Service Not Accessible on Tailnet
+
+**Check Tailscale container is healthy:**
+```bash
+docker ps --filter name=tailscale-${SERVICE}
+```
+
+**Verify application is using Tailscale network:**
+```bash
+docker inspect app-${SERVICE} | grep NetworkMode
+# Should show: "NetworkMode": "container:tailscale-${SERVICE}"
+```
+
+**Check application logs:**
+```bash
+docker logs app-${SERVICE}
+```
+
+### Application Can't Start
+
+**Verify Tailscale is healthy first:**
+```bash
+docker logs tailscale-${SERVICE}
+```
+
+The application won't start until Tailscale passes its health check.
+
+**Check environment variables:**
+```bash
+docker compose config | grep -A 20 application
+```
+
+### Permission Denied Errors
+
+**Fix volume ownership:**
+```bash
+sudo chown -R $(id -u):$(id -g) ./${SERVICE}-data
+```
+
+**Check PUID/PGID match your user:**
+```bash
+id
+# Update compose.yaml with your UID/GID
+```
+
+### Health Check Failing
+
+**Test health check manually:**
+```bash
+docker exec app-${SERVICE} curl -f http://localhost:8080/health
+```
+
+**Increase start period if service is slow to start:**
+```yaml
+healthcheck:
+  start_period: 60s  # Give more time for initialization
+```
+
+## Migration from Existing Stacks
+
+To migrate an existing Docker Compose service to ScaleTail:
+
+1. **Copy your existing `compose.yaml`** to `services/<service-name>/`
+2. **Add the Tailscale sidecar** from the template
+3. **Update the application container:**
+   ```yaml
+   application:  # Your existing service
+     network_mode: service:tailscale  # Add this
+     depends_on:  # Add this
+       tailscale:
+         condition: service_healthy
+   ```
+4. **Remove port bindings** (optional - keep if LAN access needed)
+5. **Test the configuration:**
+   ```bash
+   docker compose config
+   docker compose up -d
+   ```
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Exit Nodes" icon="route" href="/advanced/exit-nodes">
+    Configure Tailscale exit nodes
+  </Card>
+  <Card title="MagicDNS" icon="wand-magic-sparkles" href="/advanced/magicdns">
+    Use MagicDNS with your services
+  </Card>
+  <Card title="Security Best Practices" icon="shield-halved" href="/advanced/security-best-practices">
+    Secure your deployment
+  </Card>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Deploy your first service
+  </Card>
+</CardGroup>
+
+## Additional Reading
+
+- [Docker Compose Documentation](https://docs.docker.com/compose/)
+- [Tailscale Docker Guide](https://tailscale.com/kb/1282/docker)
+- [Container Networking](https://docs.docker.com/network/)

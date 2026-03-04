@@ -1,0 +1,303 @@
+---
+title: Using Docker Compose
+description: Deploy and manage ScaleTail services with Docker Compose
+---
+
+ScaleTail uses Docker Compose to orchestrate Tailscale sidecar containers alongside your self-hosted services. This guide covers the complete Docker Compose workflow.
+
+## Understanding the compose structure
+
+Every ScaleTail service follows a consistent two-container pattern:
+
+```yaml
+services:
+  # Tailscale sidecar container
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: tailscale-${SERVICE}
+    hostname: ${SERVICE}
+    # ... Tailscale configuration
+    
+  # Application container
+  application:
+    image: ${IMAGE_URL}
+    network_mode: service:tailscale  # Routes traffic through Tailscale
+    container_name: app-${SERVICE}
+    depends_on:
+      tailscale:
+        condition: service_healthy
+    # ... Application configuration
+```
+
+<Info>
+  The `network_mode: service:tailscale` setting makes the application container share the Tailscale container's network stack.
+</Info>
+
+## Environment configuration
+
+Create a `.env` file in the service directory to configure variables:
+
+```bash .env
+# Tailscale authentication
+TS_AUTHKEY=tskey-auth-xxxxxxxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# Service configuration
+SERVICE=jellyfin
+IMAGE_URL=jellyfin/jellyfin:latest
+SERVICEPORT=8096
+
+# Tailscale Serve configuration
+TS_CERT_DOMAIN=jellyfin
+
+# Optional: DNS server
+# DNS_SERVER=1.1.1.1
+```
+
+<Warning>
+  Never commit `.env` files containing real auth keys to version control. Add `.env` to your `.gitignore`.
+</Warning>
+
+## Deploying a service
+
+<Steps>
+  <Step title="Navigate to the service directory">
+    ```bash
+    cd ScaleTail/services/jellyfin
+    ```
+  </Step>
+  
+  <Step title="Create the .env file">
+    ```bash
+    # Copy from example or create manually
+    cat > .env << EOF
+    TS_AUTHKEY=your-auth-key-here
+    SERVICE=jellyfin
+    IMAGE_URL=jellyfin/jellyfin:latest
+    SERVICEPORT=8096
+    TS_CERT_DOMAIN=jellyfin
+    EOF
+    ```
+  </Step>
+  
+  <Step title="Validate the configuration">
+    ```bash
+    # Check for syntax errors and missing variables
+    docker compose config
+    ```
+    
+    <Tip>
+      The `docker compose config` command renders the final configuration with all variables substituted. Review it carefully before deploying.
+    </Tip>
+  </Step>
+  
+  <Step title="Start the service">
+    ```bash
+    # Start in detached mode
+    docker compose up -d
+    ```
+  </Step>
+</Steps>
+
+## Managing services
+
+### View logs
+
+```bash
+# All containers
+docker compose logs -f
+
+# Specific container
+docker compose logs -f tailscale
+docker compose logs -f application
+
+# Last 50 lines
+docker compose logs --tail=50
+```
+
+### Check status
+
+```bash
+# View running containers
+docker compose ps
+
+# Check health status
+docker compose ps --format json | jq '.[] | {name: .Name, health: .Health}'
+```
+
+### Restart services
+
+```bash
+# Restart all containers
+docker compose restart
+
+# Restart specific container
+docker compose restart tailscale
+```
+
+### Stop services
+
+```bash
+# Stop containers (keeps volumes)
+docker compose stop
+
+# Stop and remove containers (keeps volumes)
+docker compose down
+
+# Stop and remove containers and volumes
+docker compose down -v
+```
+
+<Warning>
+  Using `docker compose down -v` will delete all data volumes. Only use this if you want to completely remove the service and its data.
+</Warning>
+
+## Updating services
+
+### Update application image
+
+```bash
+# Pull the latest image
+docker compose pull application
+
+# Recreate the container with the new image
+docker compose up -d application
+```
+
+### Update Tailscale image
+
+```bash
+# Pull the latest Tailscale image
+docker compose pull tailscale
+
+# Recreate both containers (application depends on Tailscale)
+docker compose up -d
+```
+
+### Update compose.yaml
+
+If you modify the `compose.yaml` file:
+
+```bash
+# Validate changes
+docker compose config
+
+# Apply changes
+docker compose up -d
+```
+
+## Multi-service deployments
+
+You can manage multiple services from the repository root:
+
+```bash
+# Start multiple services
+cd ~/ScaleTail
+docker compose -f services/jellyfin/compose.yaml -f services/sonarr/compose.yaml up -d
+
+# Or use a custom compose file that includes multiple services
+```
+
+## Inspecting the network
+
+### View Tailscale IP
+
+```bash
+# Get the Tailscale IP assigned to the service
+docker exec tailscale-jellyfin tailscale ip -4
+```
+
+### Check connectivity
+
+```bash
+# Verify the service is on your Tailnet
+docker exec tailscale-jellyfin tailscale status
+
+# Ping another device on your Tailnet
+docker exec tailscale-jellyfin ping other-device.your-tailnet.ts.net
+```
+
+## Volume management
+
+### List volumes
+
+```bash
+# Show all volumes for the service
+docker compose config --volumes
+
+# Inspect a specific volume
+docker volume inspect jellyfin_jellyfin-data
+```
+
+### Backup volumes
+
+```bash
+# Stop the service
+docker compose stop
+
+# Backup the volume
+docker run --rm -v jellyfin_jellyfin-data:/data -v $(pwd):/backup \
+  ubuntu tar czf /backup/jellyfin-backup.tar.gz /data
+
+# Restart the service
+docker compose start
+```
+
+### Restore volumes
+
+```bash
+# Stop the service
+docker compose stop
+
+# Restore from backup
+docker run --rm -v jellyfin_jellyfin-data:/data -v $(pwd):/backup \
+  ubuntu tar xzf /backup/jellyfin-backup.tar.gz -C /
+
+# Restart the service
+docker compose start
+```
+
+## Resource limits
+
+Add resource limits to prevent services from consuming all system resources:
+
+```yaml
+services:
+  application:
+    # ... other configuration
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+```
+
+## Docker Compose best practices
+
+<CardGroup cols={2}>
+  <Card title="Use .env files" icon="file">
+    Keep secrets and configuration in `.env` files, not in `compose.yaml`
+  </Card>
+  <Card title="Validate before deploy" icon="check">
+    Always run `docker compose config` to catch errors early
+  </Card>
+  <Card title="Pin image versions" icon="lock">
+    Use specific tags instead of `latest` for production deployments
+  </Card>
+  <Card title="Monitor logs" icon="list">
+    Regularly check logs with `docker compose logs` for errors
+  </Card>
+</CardGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Health checks" icon="heart-pulse" href="/deployment/health-checks">
+    Configure health checks for reliability
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/deployment/troubleshooting">
+    Solve common deployment issues
+  </Card>
+</CardGroup>

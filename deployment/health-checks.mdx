@@ -1,0 +1,324 @@
+---
+title: Health checks
+description: Configure and monitor container health checks for reliability
+---
+
+ScaleTail services use Docker health checks to ensure containers are running correctly before routing traffic to them. This guide explains how health checks work and how to configure them.
+
+## Understanding health checks
+
+Health checks verify that containers are operational by running periodic tests. Docker marks containers as:
+
+- **healthy**: Health check passed
+- **unhealthy**: Health check failed after retries
+- **starting**: Initial grace period before first check
+
+## Tailscale sidecar health check
+
+Every Tailscale sidecar includes a health check that verifies Tailscale has connected to your Tailnet:
+
+```yaml
+tailscale:
+  image: tailscale/tailscale:latest
+  environment:
+    - TS_ENABLE_HEALTH_CHECK=true
+    - TS_LOCAL_ADDR_PORT=127.0.0.1:41234
+  healthcheck:
+    test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:41234/healthz"]
+    interval: 1m
+    timeout: 10s
+    retries: 3
+    start_period: 10s
+```
+
+### Health check configuration
+
+<ParamField path="test" type="array" required>
+  Command to execute. Returns exit code 0 for healthy, non-zero for unhealthy.
+</ParamField>
+
+<ParamField path="interval" type="duration" default="1m">
+  Time between health checks (e.g., `30s`, `1m`, `2m`).
+</ParamField>
+
+<ParamField path="timeout" type="duration" default="10s">
+  Maximum time to wait for the health check to complete.
+</ParamField>
+
+<ParamField path="retries" type="integer" default="3">
+  Number of consecutive failures before marking as unhealthy.
+</ParamField>
+
+<ParamField path="start_period" type="duration" default="10s">
+  Grace period before starting health checks. Allows container initialization.
+</ParamField>
+
+## Application health checks
+
+Application containers also include health checks to verify the service is responding:
+
+```yaml
+application:
+  image: jellyfin/jellyfin:latest
+  healthcheck:
+    test: ["CMD", "pgrep", "-f", "jellyfin"]
+    interval: 1m
+    timeout: 10s
+    retries: 3
+    start_period: 30s
+```
+
+### Common health check patterns
+
+<Tabs>
+  <Tab title="Process check">
+    Verify a process is running:
+    ```yaml
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "service-name"]
+    ```
+  </Tab>
+  
+  <Tab title="HTTP endpoint">
+    Check an HTTP endpoint:
+    ```yaml
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
+    ```
+    
+    Or with curl:
+    ```yaml
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+    ```
+  </Tab>
+  
+  <Tab title="Port check">
+    Verify a port is listening:
+    ```yaml
+    healthcheck:
+      test: ["CMD-SHELL", "netstat -an | grep 8080 > /dev/null; exit $?"]
+    ```
+  </Tab>
+  
+  <Tab title="File check">
+    Check if a file exists:
+    ```yaml
+    healthcheck:
+      test: ["CMD", "test", "-f", "/var/run/service.pid"]
+    ```
+  </Tab>
+</Tabs>
+
+## Dependency ordering
+
+The `depends_on` directive ensures the application container waits for Tailscale to be healthy:
+
+```yaml
+application:
+  network_mode: service:tailscale
+  depends_on:
+    tailscale:
+      condition: service_healthy  # Wait for Tailscale health check to pass
+```
+
+<Info>
+  Without `condition: service_healthy`, Docker would only wait for the Tailscale container to start, not for it to be ready.
+</Info>
+
+## Monitoring health status
+
+### View health status
+
+```bash
+# Check status of all containers
+docker compose ps
+
+# Get detailed health information
+docker inspect --format='{{.State.Health.Status}}' tailscale-jellyfin
+```
+
+### View health check logs
+
+```bash
+# Last 5 health check results
+docker inspect --format='{{range .State.Health.Log}}{{.Output}}{{end}}' tailscale-jellyfin
+
+# Full health check history
+docker inspect tailscale-jellyfin | jq '.[0].State.Health'
+```
+
+## Troubleshooting unhealthy containers
+
+<Accordion title="Tailscale health check failing">
+  **Symptoms**: Container shows as unhealthy, service not accessible on Tailnet
+  
+  **Check the health endpoint**:
+  ```bash
+  docker exec tailscale-jellyfin wget -O- http://127.0.0.1:41234/healthz
+  ```
+  
+  **Common causes**:
+  - Invalid auth key
+  - Tailscale not connected to Tailnet
+  - Network configuration issues
+  - `/dev/net/tun` device not available
+  
+  **Solution**:
+  ```bash
+  # Check Tailscale status
+  docker exec tailscale-jellyfin tailscale status
+  
+  # Check Tailscale logs
+  docker logs tailscale-jellyfin
+  
+  # Restart the container
+  docker compose restart tailscale
+  ```
+</Accordion>
+
+<Accordion title="Application health check failing">
+  **Symptoms**: Application container marked unhealthy, but Tailscale is healthy
+  
+  **Check the application**:
+  ```bash
+  # Test the health check command manually
+  docker exec app-jellyfin pgrep -f jellyfin
+  
+  # Check application logs
+  docker logs app-jellyfin
+  ```
+  
+  **Common causes**:
+  - Application failed to start
+  - Application crashed
+  - Health check command incorrect for this service
+  - Insufficient start_period for slow-starting services
+  
+  **Solution**:
+  ```bash
+  # Increase start_period if service starts slowly
+  # In compose.yaml:
+  healthcheck:
+    start_period: 60s  # Give more time to initialize
+  
+  # Restart the application
+  docker compose restart application
+  ```
+</Accordion>
+
+<Accordion title="Health check times out">
+  **Symptoms**: Health check takes longer than the timeout value
+  
+  **Solution**: Increase the timeout:
+  ```yaml
+  healthcheck:
+    timeout: 30s  # Increase from default 10s
+  ```
+</Accordion>
+
+## Custom health checks
+
+For services with specific requirements, create custom health check scripts:
+
+```dockerfile
+# In your custom Dockerfile
+COPY healthcheck.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/healthcheck.sh
+
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+  CMD /usr/local/bin/healthcheck.sh
+```
+
+```bash healthcheck.sh
+#!/bin/bash
+set -e
+
+# Check if process is running
+if ! pgrep -f "my-service" > /dev/null; then
+  exit 1
+fi
+
+# Check if HTTP endpoint responds
+if ! curl -f http://localhost:8080/health > /dev/null 2>&1; then
+  exit 1
+fi
+
+# Check if required files exist
+if [ ! -f /var/run/service.ready ]; then
+  exit 1
+fi
+
+exit 0
+```
+
+## Health check best practices
+
+<CardGroup cols={2}>
+  <Card title="Keep checks lightweight" icon="gauge">
+    Health checks run frequently. Avoid expensive operations like database queries.
+  </Card>
+  <Card title="Set appropriate intervals" icon="clock">
+    Balance between quick failure detection and system load. 1 minute is typical.
+  </Card>
+  <Card title="Use adequate start periods" icon="hourglass-start">
+    Allow slow-starting services time to initialize before health checks begin.
+  </Card>
+  <Card title="Test health checks" icon="flask">
+    Run health check commands manually to verify they work correctly.
+  </Card>
+</CardGroup>
+
+## Advanced patterns
+
+### Multi-stage health checks
+
+For services with initialization stages:
+
+```bash healthcheck.sh
+#!/bin/bash
+
+# Stage 1: Process running?
+if ! pgrep -f "service" > /dev/null; then
+  echo "Process not running"
+  exit 1
+fi
+
+# Stage 2: Listening on port?
+if ! netstat -an | grep -q ":8080.*LISTEN"; then
+  echo "Port not listening"
+  exit 1
+fi
+
+# Stage 3: Service responding?
+if ! curl -f http://localhost:8080/health > /dev/null 2>&1; then
+  echo "Service not responding"
+  exit 1
+fi
+
+echo "Healthy"
+exit 0
+```
+
+### Conditional health checks
+
+Disable health checks for debugging:
+
+```yaml
+services:
+  application:
+    # ... other config
+    healthcheck:
+      disable: true  # Temporarily disable for troubleshooting
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Troubleshooting" icon="wrench" href="/deployment/troubleshooting">
+    Solve common deployment issues
+  </Card>
+  <Card title="Docker Compose guide" icon="docker" href="/deployment/docker-compose">
+    Learn Docker Compose management
+  </Card>
+</CardGroup>

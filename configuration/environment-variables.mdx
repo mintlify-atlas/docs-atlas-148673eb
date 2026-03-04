@@ -1,0 +1,714 @@
+---
+title: 'Environment Variables'
+description: 'Complete reference for all Tailscale environment variables used in ScaleTail'
+icon: 'code'
+---
+
+## Overview
+
+Tailscale containers in ScaleTail are configured through environment variables. This reference documents all available variables, their types, defaults, and usage.
+
+<Note>
+  All environment variables prefixed with `TS_` are Tailscale-specific and control the behavior of the Tailscale sidecar container.
+</Note>
+
+## Core Variables
+
+These variables are required for basic Tailscale functionality.
+
+### TS_AUTHKEY
+
+<ParamField path="TS_AUTHKEY" type="string" required>
+  Authentication key for joining your Tailscale network (Tailnet)
+</ParamField>
+
+**Description**: The auth key allows your Docker container to automatically authenticate with your Tailnet. Generate this key from the [Tailscale Admin Console](https://login.tailscale.com/admin/settings/keys).
+
+**Usage**:
+```yaml
+environment:
+  - TS_AUTHKEY=${TS_AUTHKEY}
+```
+
+**Example**:
+```bash .env
+TS_AUTHKEY=tskey-auth-xxxxxxxxxxxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+<Warning>
+  Never commit auth keys to version control. Always use environment variables or secrets management.
+</Warning>
+
+**Best Practices**:
+- Use **reusable** keys for multiple service deployments
+- Enable **pre-approved** to skip manual device authorization
+- Set appropriate **expiration** periods (90 days is common)
+- Use **tagged** keys to automatically apply ACL rules
+
+### TS_STATE_DIR
+
+<ParamField path="TS_STATE_DIR" type="string" default="/var/lib/tailscale">
+  Directory where Tailscale stores state information
+</ParamField>
+
+**Description**: This directory persists your Tailscale connection state, keys, and configuration across container restarts. Must be mounted to a volume for persistence.
+
+**Usage**:
+```yaml
+environment:
+  - TS_STATE_DIR=/var/lib/tailscale
+volumes:
+  - ./ts/state:/var/lib/tailscale
+```
+
+<Note>
+  Always mount this directory to a host volume. Without persistence, your container will create a new Tailscale identity on every restart.
+</Note>
+
+**Directory Contents**:
+- `tailscaled.state` - Connection state and machine identity
+- Private keys and certificates
+- Local configuration
+
+## Serve and Funnel Configuration
+
+### TS_SERVE_CONFIG
+
+<ParamField path="TS_SERVE_CONFIG" type="string" optional>
+  Path to the serve.json configuration file for Tailscale Serve/Funnel
+</ParamField>
+
+**Description**: Defines how Tailscale should route incoming requests to your application. This enables Tailscale Serve (private) or Funnel (public) access.
+
+**Usage**:
+```yaml
+environment:
+  - TS_SERVE_CONFIG=/config/serve.json
+configs:
+  - source: ts-serve
+    target: /config/serve.json
+```
+
+**Example Configuration**:
+```json serve.json
+{
+  "TCP": {
+    "443": {"HTTPS": true}
+  },
+  "Web": {
+    "jellyfin.your-tailnet.ts.net:443": {
+      "Handlers": {
+        "/": {
+          "Proxy": "http://127.0.0.1:8096"
+        }
+      }
+    }
+  },
+  "AllowFunnel": {
+    "jellyfin.your-tailnet.ts.net:443": false
+  }
+}
+```
+
+**Configuration Fields**:
+
+<Tabs>
+  <Tab title="TCP">
+    ```json
+    "TCP": {
+      "443": {"HTTPS": true}
+    }
+    ```
+    
+    Enables HTTPS on port 443. Tailscale automatically provisions TLS certificates.
+  </Tab>
+  
+  <Tab title="Web">
+    ```json
+    "Web": {
+      "service.tailnet.ts.net:443": {
+        "Handlers": {
+          "/": {
+            "Proxy": "http://127.0.0.1:8096"
+          }
+        }
+      }
+    }
+    ```
+    
+    Defines routing rules:
+    - **Domain**: Your Tailscale hostname
+    - **Path**: URL path to match (`/` = all paths)
+    - **Proxy**: Backend application address and port
+  </Tab>
+  
+  <Tab title="AllowFunnel">
+    ```json
+    "AllowFunnel": {
+      "service.tailnet.ts.net:443": false
+    }
+    ```
+    
+    Controls public access:
+    - `false`: Private to Tailnet (Serve)
+    - `true`: Public internet access (Funnel)
+  </Tab>
+</Tabs>
+
+<Warning>
+  If `TS_SERVE_CONFIG` is not set, your service will join the Tailnet but won't be accessible via Tailscale Serve/Funnel. You'll need to connect directly via IP address.
+</Warning>
+
+**Common Ports**:
+- Jellyfin: `8096`
+- Portainer: `9000`
+- Vaultwarden: `80`
+- Home Assistant: `8123`
+- Plex: `32400`
+
+### TS_CERT_DOMAIN
+
+<ParamField path="TS_CERT_DOMAIN" type="string" optional>
+  Domain name for TLS certificate (used in serve.json template)
+</ParamField>
+
+**Description**: While not a Tailscale environment variable itself, this is commonly used in ScaleTail configurations to template the serve.json file.
+
+**Usage**:
+```yaml
+configs:
+  ts-serve:
+    content: |
+      {"TCP":{"443":{"HTTPS":true}},
+      "Web":{"${TS_CERT_DOMAIN}:443":
+          {"Handlers":{"/":
+          {"Proxy":"http://127.0.0.1:8096"}}}},
+      "AllowFunnel":{"${TS_CERT_DOMAIN}:443":false}}
+```
+
+**Example**:
+```bash .env
+TS_CERT_DOMAIN=jellyfin.your-tailnet.ts.net
+```
+
+<Note>
+  The `${TS_CERT_DOMAIN}` syntax is Docker Compose variable substitution, not a Tailscale feature. The `$$` escapes the `$` so Docker Compose doesn't try to substitute it.
+</Note>
+
+## Network Configuration
+
+### TS_USERSPACE
+
+<ParamField path="TS_USERSPACE" type="boolean" default="true">
+  Run Tailscale in userspace networking mode
+</ParamField>
+
+**Description**: Controls whether Tailscale uses kernel networking or userspace networking.
+
+**Usage**:
+```yaml
+environment:
+  - TS_USERSPACE=false
+```
+
+**Values**:
+- `true`: Userspace networking (default) - More portable, works without elevated privileges
+- `false`: Kernel networking - Better performance, requires `cap_add: net_admin` and `/dev/net/tun`
+
+**ScaleTail Default**: `false`
+
+Why? ScaleTail uses kernel networking for better performance and full feature support.
+
+**Required for Kernel Mode** (`TS_USERSPACE=false`):
+```yaml
+devices:
+  - /dev/net/tun:/dev/net/tun
+cap_add:
+  - net_admin
+```
+
+### TS_ACCEPT_DNS
+
+<ParamField path="TS_ACCEPT_DNS" type="boolean" default="false">
+  Accept DNS configuration from Tailscale (MagicDNS)
+</ParamField>
+
+**Description**: When enabled, the container will use Tailscale's MagicDNS for name resolution, allowing you to access other devices by their Tailscale hostnames.
+
+**Usage**:
+```yaml
+environment:
+  - TS_ACCEPT_DNS=true
+```
+
+**When to Enable**:
+- You have MagicDNS enabled in your Tailnet
+- Your application needs to resolve Tailscale hostnames
+- You want automatic DNS for other Tailnet devices
+
+**Default in ScaleTail**: Commented out (disabled)
+
+```yaml
+# Uncomment when using MagicDNS
+#- TS_ACCEPT_DNS=true
+```
+
+<Note>
+  Enable MagicDNS in your Tailnet at [https://login.tailscale.com/admin/dns](https://login.tailscale.com/admin/dns)
+</Note>
+
+### TS_EXTRA_ARGS
+
+<ParamField path="TS_EXTRA_ARGS" type="string" optional>
+  Additional command-line arguments to pass to tailscaled
+</ParamField>
+
+**Description**: Allows passing arbitrary flags to the Tailscale daemon for advanced configurations.
+
+**Usage**:
+```yaml
+environment:
+  - TS_EXTRA_ARGS=--advertise-exit-node
+```
+
+**Common Use Cases**:
+
+<Tabs>
+  <Tab title="Exit Node">
+    ```yaml
+    environment:
+      - TS_EXTRA_ARGS=--advertise-exit-node
+    ```
+    
+    Advertises this device as an exit node, allowing other devices on your Tailnet to route all internet traffic through it.
+    
+    **Additional Requirements**:
+    ```yaml
+    sysctls:
+      net.ipv4.ip_forward: 1
+      net.ipv6.conf.all.forwarding: 1
+    ```
+  </Tab>
+  
+  <Tab title="Subnet Router">
+    ```yaml
+    environment:
+      - TS_EXTRA_ARGS=--advertise-routes=192.168.1.0/24,10.0.0.0/8
+    ```
+    
+    Advertises local subnet routes, allowing Tailnet devices to access your local network.
+  </Tab>
+  
+  <Tab title="Custom Hostname">
+    ```yaml
+    environment:
+      - TS_EXTRA_ARGS=--hostname=custom-name
+    ```
+    
+    Override the default hostname (though using the `hostname:` field in compose is preferred).
+  </Tab>
+  
+  <Tab title="Multiple Flags">
+    ```yaml
+    environment:
+      - TS_EXTRA_ARGS=--advertise-exit-node --advertise-routes=192.168.1.0/24
+    ```
+    
+    Combine multiple flags with spaces.
+  </Tab>
+</Tabs>
+
+**Full Flag Reference**: [Tailscale CLI documentation](https://tailscale.com/kb/1080/cli)
+
+## Authentication and Security
+
+### TS_AUTH_ONCE
+
+<ParamField path="TS_AUTH_ONCE" type="boolean" default="false">
+  Only authenticate on first run, reuse existing state on subsequent runs
+</ParamField>
+
+**Description**: When enabled, the container will only use the auth key on the first startup. Subsequent restarts will reuse the existing machine identity.
+
+**Usage**:
+```yaml
+environment:
+  - TS_AUTH_ONCE=true
+```
+
+**Benefits**:
+- Prevents consuming auth key usage limits on restarts
+- Maintains stable machine identity
+- Recommended for production deployments
+
+**ScaleTail Default**: `true`
+
+<Warning>
+  If you delete the state directory (`TS_STATE_DIR`) with `TS_AUTH_ONCE=true`, the container won't be able to re-authenticate. You'll need to temporarily set it to `false` or provide a new auth key.
+</Warning>
+
+## Health and Monitoring
+
+### TS_ENABLE_HEALTH_CHECK
+
+<ParamField path="TS_ENABLE_HEALTH_CHECK" type="boolean" default="false">
+  Enable the built-in HTTP health check endpoint
+</ParamField>
+
+**Description**: Enables a health check endpoint at `/healthz` that returns the Tailscale connection status.
+
+**Usage**:
+```yaml
+environment:
+  - TS_ENABLE_HEALTH_CHECK=true
+  - TS_LOCAL_ADDR_PORT=127.0.0.1:41234
+```
+
+**ScaleTail Default**: `true`
+
+Why? Health checks ensure the application container only starts after Tailscale has successfully connected.
+
+**Docker Health Check**:
+```yaml
+healthcheck:
+  test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:41234/healthz"]
+  interval: 1m
+  timeout: 10s
+  retries: 3
+  start_period: 10s
+```
+
+**Health Check Response**:
+- **200 OK**: Tailscale connected and operational
+- **503 Service Unavailable**: Tailscale not connected or starting up
+
+### TS_LOCAL_ADDR_PORT
+
+<ParamField path="TS_LOCAL_ADDR_PORT" type="string" default=":41112">
+  Address and port for the local API and health check endpoint
+</ParamField>
+
+**Description**: Specifies where the Tailscale local API and health check endpoint listen.
+
+**Usage**:
+```yaml
+environment:
+  - TS_LOCAL_ADDR_PORT=127.0.0.1:41234
+```
+
+**Format**: `<address>:<port>`
+- `127.0.0.1:41234` - Only localhost (recommended)
+- `:41234` - All interfaces
+- `0.0.0.0:41234` - All interfaces (explicit)
+
+**ScaleTail Default**: `127.0.0.1:41234`
+
+<Note>
+  The port must not conflict with your application's port. The default 41234 is chosen to avoid common application ports.
+</Note>
+
+## Complete Example
+
+Here's a complete example showing all commonly used environment variables:
+
+<CodeGroup>
+```yaml compose.yaml
+configs:
+  ts-serve:
+    content: |
+      {"TCP":{"443":{"HTTPS":true}},
+      "Web":{"${TS_CERT_DOMAIN}:443":
+          {"Handlers":{"/":
+          {"Proxy":"http://127.0.0.1:8096"}}}},
+      "AllowFunnel":{"${TS_CERT_DOMAIN}:443":false}}
+
+services:
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: tailscale-jellyfin
+    hostname: jellyfin
+    environment:
+      # Core Configuration
+      - TS_AUTHKEY=${TS_AUTHKEY}
+      - TS_STATE_DIR=/var/lib/tailscale
+      
+      # Serve/Funnel
+      - TS_SERVE_CONFIG=/config/serve.json
+      
+      # Network
+      - TS_USERSPACE=false
+      - TS_ACCEPT_DNS=true  # Enable if using MagicDNS
+      
+      # Authentication
+      - TS_AUTH_ONCE=true
+      
+      # Health Check
+      - TS_ENABLE_HEALTH_CHECK=true
+      - TS_LOCAL_ADDR_PORT=127.0.0.1:41234
+    
+    configs:
+      - source: ts-serve
+        target: /config/serve.json
+    
+    volumes:
+      - ./config:/config
+      - ./ts/state:/var/lib/tailscale
+    
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    
+    cap_add:
+      - net_admin
+    
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:41234/healthz"]
+      interval: 1m
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    
+    restart: always
+  
+  application:
+    image: jellyfin/jellyfin:latest
+    network_mode: service:tailscale
+    container_name: app-jellyfin
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Amsterdam
+    volumes:
+      - ./jellyfin-data/config:/config
+      - ./media:/media
+    depends_on:
+      tailscale:
+        condition: service_healthy
+    restart: always
+```
+
+```bash .env
+# Tailscale Configuration
+TS_AUTHKEY=tskey-auth-xxxxxxxxxxxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TS_CERT_DOMAIN=jellyfin.your-tailnet.ts.net
+
+# Service Configuration
+SERVICE=jellyfin
+IMAGE_URL=jellyfin/jellyfin:latest
+```
+</CodeGroup>
+
+## Environment Variable Reference Table
+
+| Variable | Type | Required | Default | Description |
+|----------|------|----------|---------|-------------|
+| `TS_AUTHKEY` | string | Yes | - | Authentication key for Tailnet |
+| `TS_STATE_DIR` | string | No | `/var/lib/tailscale` | State persistence directory |
+| `TS_SERVE_CONFIG` | string | No | - | Path to serve.json configuration |
+| `TS_USERSPACE` | boolean | No | `true` | Use userspace networking |
+| `TS_ACCEPT_DNS` | boolean | No | `false` | Accept MagicDNS configuration |
+| `TS_EXTRA_ARGS` | string | No | - | Additional tailscaled arguments |
+| `TS_AUTH_ONCE` | boolean | No | `false` | Only authenticate on first run |
+| `TS_ENABLE_HEALTH_CHECK` | boolean | No | `false` | Enable health check endpoint |
+| `TS_LOCAL_ADDR_PORT` | string | No | `:41112` | Health check endpoint address |
+
+## Service-Specific Variables
+
+These are not Tailscale variables but are commonly used in ScaleTail configurations:
+
+### SERVICE
+
+<ParamField path="SERVICE" type="string" required>
+  Name of the service being deployed
+</ParamField>
+
+**Usage**:
+```yaml
+container_name: tailscale-${SERVICE}
+hostname: ${SERVICE}
+```
+
+**Example**:
+```bash .env
+SERVICE=jellyfin
+```
+
+### IMAGE_URL
+
+<ParamField path="IMAGE_URL" type="string" required>
+  Docker image for the application container
+</ParamField>
+
+**Usage**:
+```yaml
+application:
+  image: ${IMAGE_URL}
+```
+
+**Example**:
+```bash .env
+IMAGE_URL=jellyfin/jellyfin:latest
+```
+
+### DNS_SERVER
+
+<ParamField path="DNS_SERVER" type="string" optional>
+  Custom DNS server for the Tailscale container
+</ParamField>
+
+**Usage**:
+```yaml
+tailscale:
+  dns:
+    - ${DNS_SERVER}
+```
+
+**Example**:
+```bash .env
+DNS_SERVER=1.1.1.1
+```
+
+## Exit Node Example
+
+For deploying a Tailscale exit node, use this configuration:
+
+```yaml compose.yaml
+services:
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: tailscale-exit-node
+    hostname: exit-node
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY}
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_EXTRA_ARGS=--advertise-exit-node
+      - TS_USERSPACE=false
+      - TS_ENABLE_HEALTH_CHECK=true
+      - TS_LOCAL_ADDR_PORT=127.0.0.1:41234
+      - TS_AUTH_ONCE=true
+    volumes:
+      - ./ts/state:/var/lib/tailscale
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    dns:
+      - ${DNS_SERVER}
+    sysctls:
+      net.ipv4.ip_forward: 1
+      net.ipv6.conf.all.forwarding: 1
+    cap_add:
+      - net_admin
+    network_mode: bridge
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:41234/healthz"]
+      interval: 1m
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: always
+```
+
+<Note>
+  Exit nodes require `sysctls` for IP forwarding and typically use `network_mode: bridge` instead of sharing with an application container.
+</Note>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="TS_AUTHKEY not working">
+    **Symptoms**: Container fails to join Tailnet, logs show auth errors
+    
+    **Solutions**:
+    - Verify the key is correct and complete
+    - Check if the key has expired
+    - Ensure the key hasn't reached its usage limit (for non-reusable keys)
+    - Try generating a new key
+  </Accordion>
+  
+  <Accordion title="State not persisting">
+    **Symptoms**: New machine appears in Tailnet on every restart
+    
+    **Solutions**:
+    - Verify `TS_STATE_DIR` volume is correctly mounted
+    - Check directory permissions (should be writable by container)
+    - Ensure `TS_AUTH_ONCE=true` is set
+    - Check if the volume path exists on host
+  </Accordion>
+  
+  <Accordion title="Health check failing">
+    **Symptoms**: Container shows unhealthy, application doesn't start
+    
+    **Solutions**:
+    - Verify `TS_ENABLE_HEALTH_CHECK=true` is set
+    - Check `TS_LOCAL_ADDR_PORT` matches health check URL
+    - Ensure port is not in use by application
+    - Review Tailscale logs for connection issues
+    - Test manually: `docker exec tailscale-service wget -O- http://127.0.0.1:41234/healthz`
+  </Accordion>
+  
+  <Accordion title="DNS not resolving">
+    **Symptoms**: Can't resolve Tailscale hostnames from container
+    
+    **Solutions**:
+    - Enable `TS_ACCEPT_DNS=true`
+    - Verify MagicDNS is enabled in Tailnet settings
+    - Check DNS configuration in Tailscale admin console
+    - Test resolution: `docker exec app-service nslookup other-device.tailnet.ts.net`
+  </Accordion>
+  
+  <Accordion title="Kernel mode not working">
+    **Symptoms**: Container fails with network errors when `TS_USERSPACE=false`
+    
+    **Solutions**:
+    - Verify `/dev/net/tun` exists: `ls -l /dev/net/tun`
+    - Ensure `cap_add: - net_admin` is present
+    - Check container has necessary permissions
+    - Try userspace mode as fallback: `TS_USERSPACE=true`
+  </Accordion>
+</AccordionGroup>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use .env Files" icon="file">
+    Store all variables in `.env` files and add them to `.gitignore` to prevent committing secrets.
+  </Card>
+  
+  <Card title="Enable Health Checks" icon="heart-pulse">
+    Always use `TS_ENABLE_HEALTH_CHECK=true` to ensure reliable startup ordering with application containers.
+  </Card>
+  
+  <Card title="Persist State" icon="database">
+    Always mount `TS_STATE_DIR` to a volume to maintain stable machine identity across restarts.
+  </Card>
+  
+  <Card title="Use TS_AUTH_ONCE" icon="key">
+    Set `TS_AUTH_ONCE=true` in production to avoid consuming auth key limits on restarts.
+  </Card>
+  
+  <Card title="Kernel Mode Performance" icon="gauge-high">
+    Use `TS_USERSPACE=false` with proper capabilities for better performance in production.
+  </Card>
+  
+  <Card title="Document Overrides" icon="note">
+    Comment why you're using non-default values, especially for `TS_EXTRA_ARGS`.
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Tailscale Setup" icon="key" href="/configuration/tailscale-setup">
+    Generate auth keys and configure your Tailnet
+  </Card>
+  
+  <Card title="Sidecar Pattern" icon="layer-group" href="/configuration/sidecar-pattern">
+    Understand how these variables work in the sidecar architecture
+  </Card>
+  
+  <Card title="Serve vs Funnel" icon="network-wired" href="/configuration/serve-vs-funnel">
+    Learn how TS_SERVE_CONFIG controls access
+  </Card>
+  
+  <Card title="Deploy Services" icon="rocket" href="/quickstart">
+    Put these variables into practice
+  </Card>
+</CardGroup>

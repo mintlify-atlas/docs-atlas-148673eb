@@ -1,0 +1,485 @@
+---
+title: 'Docker Sidecar Pattern'
+description: 'Understanding the Tailscale sidecar architecture and how it routes traffic in ScaleTail'
+icon: 'layer-group'
+---
+
+## What is the Sidecar Pattern?
+
+The sidecar pattern is a design approach where a helper container runs alongside your main application container, providing supporting functionality without modifying the application itself. In ScaleTail, the Tailscale container acts as a network sidecar, handling all secure networking while your application focuses solely on its core functionality.
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────┐
+│         Docker Compose Stack                │
+│                                             │
+│  ┌──────────────────┐  ┌─────────────────┐ │
+│  │   Tailscale      │  │   Application   │ │
+│  │   Container      │  │   Container     │ │
+│  │                  │  │                 │ │
+│  │  • Auth          │  │  • Your Service │ │
+│  │  • VPN           │  │  • No network   │ │
+│  │  • Serve/Funnel  │  │    knowledge    │ │
+│  │  • Health Check  │  │    required     │ │
+│  └────────┬─────────┘  └────────┬────────┘ │
+│           │                     │          │
+│           │  network_mode:      │          │
+│           │  service:tailscale  │          │
+│           └─────────────────────┘          │
+│                                             │
+│         Shared Network Namespace            │
+└─────────────────────────────────────────────┘
+         │
+         │ Tailscale VPN
+         ▼
+   Your Tailnet
+```
+
+## How It Works
+
+### Network Namespace Sharing
+
+The key to the sidecar pattern is the `network_mode: service:tailscale` directive:
+
+```yaml
+services:
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: tailscale-jellyfin
+    # Tailscale configuration...
+  
+  application:
+    image: jellyfin/jellyfin:latest
+    network_mode: service:tailscale  # Share Tailscale's network
+    # Application configuration...
+```
+
+<Note>
+  When using `network_mode: service:tailscale`, the application container shares the exact same network interface as the Tailscale container. This means:
+  - Both containers use `127.0.0.1` to communicate
+  - Network requests from the application automatically route through Tailscale
+  - No application code changes are needed
+</Note>
+
+### Traffic Flow
+
+<Steps>
+  <Step title="User Request">
+    A user on your Tailnet accesses `https://jellyfin.your-tailnet.ts.net`
+  </Step>
+  
+  <Step title="Tailscale Container Receives">
+    The Tailscale container receives the encrypted request through the VPN tunnel
+  </Step>
+  
+  <Step title="Serve Configuration Routes">
+    Based on the `serve.json` configuration, Tailscale proxies the request to `http://127.0.0.1:8096`
+  </Step>
+  
+  <Step title="Application Responds">
+    The application container (sharing the same network namespace) receives the request on port 8096 and responds
+  </Step>
+  
+  <Step title="Response Encryption">
+    Tailscale encrypts the response and sends it back through the VPN tunnel
+  </Step>
+</Steps>
+
+## Real-World Example: Jellyfin
+
+Let's examine a complete ScaleTail configuration for Jellyfin to see the sidecar pattern in action.
+
+### Complete compose.yaml
+
+```yaml compose.yaml
+configs:
+  ts-serve:
+    content: |
+      {"TCP":{"443":{"HTTPS":true}},
+      "Web":{"${TS_CERT_DOMAIN}:443":
+          {"Handlers":{"/":
+          {"Proxy":"http://127.0.0.1:8096"}}}},
+      "AllowFunnel":{"${TS_CERT_DOMAIN}:443":false}}
+
+services:
+  # Tailscale Sidecar Configuration
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: tailscale-jellyfin
+    hostname: jellyfin
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY}
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_SERVE_CONFIG=/config/serve.json
+      - TS_USERSPACE=false
+      - TS_ENABLE_HEALTH_CHECK=true
+      - TS_LOCAL_ADDR_PORT=127.0.0.1:41234
+      - TS_AUTH_ONCE=true
+    configs:
+      - source: ts-serve
+        target: /config/serve.json
+    volumes:
+      - ./config:/config
+      - ./ts/state:/var/lib/tailscale
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - net_admin
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:41234/healthz"]
+      interval: 1m
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: always
+
+  # Jellyfin Application
+  application:
+    image: jellyfin/jellyfin:latest
+    network_mode: service:tailscale  # <-- Sidecar connection
+    container_name: app-jellyfin
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Amsterdam
+    volumes:
+      - ./jellyfin-data/config:/config
+      - ./media/tvseries:/data/tvshows
+      - ./media/movies:/data/movies
+    depends_on:
+      tailscale:
+        condition: service_healthy
+    restart: always
+```
+
+### Breaking Down the Configuration
+
+<Tabs>
+  <Tab title="Tailscale Container">
+    The Tailscale container handles all networking:
+    
+    ```yaml
+    tailscale:
+      image: tailscale/tailscale:latest
+      container_name: tailscale-jellyfin
+      hostname: jellyfin  # Name in your Tailnet
+      environment:
+        - TS_AUTHKEY=${TS_AUTHKEY}  # Authentication
+        - TS_SERVE_CONFIG=/config/serve.json  # Routing config
+      devices:
+        - /dev/net/tun:/dev/net/tun  # VPN interface
+      cap_add:
+        - net_admin  # Required for network control
+    ```
+    
+    **Key Components**:
+    - **hostname**: How the service appears in your Tailnet
+    - **devices**: Access to TUN device for VPN tunneling
+    - **cap_add**: Elevated privileges for network configuration
+  </Tab>
+  
+  <Tab title="Application Container">
+    The application container focuses purely on the service:
+    
+    ```yaml
+    application:
+      image: jellyfin/jellyfin:latest
+      network_mode: service:tailscale  # Share Tailscale's network
+      depends_on:
+        tailscale:
+          condition: service_healthy  # Wait for VPN connection
+    ```
+    
+    **Key Components**:
+    - **network_mode**: Shares Tailscale's network namespace
+    - **depends_on**: Ensures Tailscale is ready before starting
+    - **No network config**: The application doesn't need to know about networking
+  </Tab>
+  
+  <Tab title="Serve Configuration">
+    The `serve.json` config defines routing:
+    
+    ```json
+    {
+      "TCP": {
+        "443": {"HTTPS": true}
+      },
+      "Web": {
+        "jellyfin.your-tailnet.ts.net:443": {
+          "Handlers": {
+            "/": {
+              "Proxy": "http://127.0.0.1:8096"
+            }
+          }
+        }
+      },
+      "AllowFunnel": {
+        "jellyfin.your-tailnet.ts.net:443": false
+      }
+    }
+    ```
+    
+    **Key Components**:
+    - **TCP/443**: Accept HTTPS connections
+    - **Proxy**: Forward to application on localhost:8096
+    - **AllowFunnel**: `false` = private to Tailnet only
+  </Tab>
+</Tabs>
+
+## Benefits of the Sidecar Pattern
+
+<CardGroup cols={2}>
+  <Card title="Zero Application Changes" icon="code">
+    Your application runs unmodified. No need to install Tailscale inside the app container or change application code.
+  </Card>
+  
+  <Card title="Separation of Concerns" icon="layer-group">
+    Networking logic lives in the Tailscale container, while application logic stays in the app container.
+  </Card>
+  
+  <Card title="Reusable Pattern" icon="copy">
+    The same Tailscale sidecar configuration works for any application - just change the proxy port.
+  </Card>
+  
+  <Card title="Independent Updates" icon="arrows-rotate">
+    Update Tailscale or your application independently without affecting the other.
+  </Card>
+  
+  <Card title="Simplified Security" icon="shield">
+    Security configurations (VPN, auth, ACLs) are isolated in one container.
+  </Card>
+  
+  <Card title="Easy Debugging" icon="bug">
+    Network issues can be debugged in the Tailscale container without touching the application.
+  </Card>
+</CardGroup>
+
+## Common Sidecar Configurations
+
+### Configuration 1: Simple Web Service (Port 80)
+
+For services like Vaultwarden or Portainer running on port 80:
+
+```yaml
+configs:
+  ts-serve:
+    content: |
+      {"TCP":{"443":{"HTTPS":true}},
+      "Web":{"${TS_CERT_DOMAIN}:443":
+          {"Handlers":{"/":
+          {"Proxy":"http://127.0.0.1:80"}}}},
+      "AllowFunnel":{"${TS_CERT_DOMAIN}:443":false}}
+```
+
+### Configuration 2: Custom Port Service
+
+For services on custom ports (e.g., Portainer on 9000):
+
+```yaml
+configs:
+  ts-serve:
+    content: |
+      {"TCP":{"443":{"HTTPS":true}},
+      "Web":{"${TS_CERT_DOMAIN}:443":
+          {"Handlers":{"/":
+          {"Proxy":"http://127.0.0.1:9000"}}}},
+      "AllowFunnel":{"${TS_CERT_DOMAIN}:443":false}}
+```
+
+### Configuration 3: Exit Node (No Application)
+
+For a Tailscale exit node without an application sidecar:
+
+```yaml
+services:
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: tailscale-exit-node
+    hostname: exit-node
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY}
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_EXTRA_ARGS=--advertise-exit-node  # No serve config needed
+      - TS_USERSPACE=false
+    volumes:
+      - ./ts/state:/var/lib/tailscale
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - net_admin
+    sysctls:
+      net.ipv4.ip_forward: 1
+      net.ipv6.conf.all.forwarding: 1
+    network_mode: bridge  # Exit nodes use bridge mode
+    restart: always
+```
+
+<Note>
+  Exit nodes don't use the sidecar pattern since they don't proxy to an application. They forward all internet traffic instead.
+</Note>
+
+## Advanced Patterns
+
+### Socket Sharing (Caddy + Tailscale)
+
+Some applications like Caddy can use the Tailscale socket directly for TLS certificates:
+
+```yaml
+services:
+  tailscale:
+    volumes:
+      - ./tailscale/tmp:/tmp  # Share socket directory
+  
+  application:
+    volumes:
+      - ./tailscale/tmp/tailscaled.sock:/var/run/tailscale/tailscaled.sock
+    network_mode: service:tailscale
+```
+
+This allows Caddy to request TLS certificates directly from Tailscale.
+
+### Health Check Dependency
+
+Ensure the application only starts after Tailscale is fully connected:
+
+```yaml
+application:
+  depends_on:
+    tailscale:
+      condition: service_healthy
+```
+
+The Tailscale container's health check verifies:
+- Container has a Tailscale IP
+- VPN tunnel is established
+- Health endpoint responds
+
+## Limitations and Considerations
+
+<Warning>
+  When using `network_mode: service:tailscale`, be aware of these limitations:
+</Warning>
+
+<AccordionGroup>
+  <Accordion title="No Port Mapping">
+    You cannot use the `ports:` directive in the application container when using `network_mode: service:tailscale`. Ports must be mapped in the Tailscale container if needed:
+    
+    ```yaml
+    tailscale:
+      ports:
+        - "0.0.0.0:8096:8096"  # If you need local network access
+    
+    application:
+      network_mode: service:tailscale
+      # ports: -- This won't work here!
+    ```
+  </Accordion>
+  
+  <Accordion title="Shared Network Identity">
+    Both containers share the same network identity. They:
+    - Have the same IP address
+    - Share all ports
+    - Cannot bind to the same port twice
+    
+    Ensure your application and Tailscale health check use different ports.
+  </Accordion>
+  
+  <Accordion title="DNS Configuration">
+    DNS settings must be configured in the Tailscale container:
+    
+    ```yaml
+    tailscale:
+      dns:
+        - 1.1.1.1
+        - 8.8.8.8
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Application can't reach localhost">
+    **Symptom**: Application logs show connection refused to 127.0.0.1
+    
+    **Solution**: Verify `network_mode: service:tailscale` is set correctly. Check that both containers are running.
+  </Accordion>
+  
+  <Accordion title="Tailscale container fails to start">
+    **Symptom**: Container exits immediately or loops restarting
+    
+    **Solution**:
+    - Verify `/dev/net/tun` exists on the host
+    - Check that `cap_add: - net_admin` is present
+    - Ensure `TS_AUTHKEY` is valid
+    - Review logs: `docker compose logs tailscale`
+  </Accordion>
+  
+  <Accordion title="Application starts before Tailscale ready">
+    **Symptom**: Application fails with network errors, then works after restart
+    
+    **Solution**: Add health check dependency:
+    
+    ```yaml
+    application:
+      depends_on:
+        tailscale:
+          condition: service_healthy
+    ```
+  </Accordion>
+  
+  <Accordion title="Can't access service from Tailnet">
+    **Symptom**: Service appears in Tailscale admin but connection times out
+    
+    **Solution**:
+    - Verify `serve.json` proxy port matches application port
+    - Check application is listening on 0.0.0.0 or 127.0.0.1
+    - Review Tailscale logs for serve configuration errors
+    - Test application locally: `docker exec app-jellyfin curl localhost:8096`
+  </Accordion>
+</AccordionGroup>
+
+## Best Practices
+
+<Steps>
+  <Step title="Use Health Checks">
+    Always configure health checks for both containers to ensure reliable startup ordering.
+  </Step>
+  
+  <Step title="Name Consistently">
+    Use consistent naming patterns like `tailscale-{service}` and `app-{service}` for easy management.
+  </Step>
+  
+  <Step title="Document Ports">
+    Comment the application's port in your compose file even though it's not explicitly mapped:
+    
+    ```yaml
+    {"Proxy":"http://127.0.0.1:8096"}  # Jellyfin default port
+    ```
+  </Step>
+  
+  <Step title="Persist State">
+    Always mount `/var/lib/tailscale` to persist Tailscale state across restarts.
+  </Step>
+</Steps>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Environment Variables" icon="code" href="/configuration/environment-variables">
+    Complete reference for all Tailscale configuration options
+  </Card>
+  
+  <Card title="Serve vs Funnel" icon="network-wired" href="/configuration/serve-vs-funnel">
+    Learn when to expose services privately or publicly
+  </Card>
+  
+  <Card title="Tailscale Setup" icon="key" href="/configuration/tailscale-setup">
+    Configure authentication and manage your Tailnet
+  </Card>
+  
+  <Card title="Deploy Services" icon="rocket" href="/quickstart">
+    Start deploying services with the sidecar pattern
+  </Card>
+</CardGroup>

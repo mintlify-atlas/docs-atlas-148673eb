@@ -1,0 +1,659 @@
+---
+title: 'Tailscale Serve vs Funnel'
+description: 'Understand the differences between private Tailnet access and public internet exposure'
+icon: 'network-wired'
+---
+
+## Overview
+
+Tailscale provides two complementary features for exposing services: **Serve** and **Funnel**. Understanding the difference is crucial for properly securing your self-hosted applications.
+
+<CardGroup cols={2}>
+  <Card title="Tailscale Serve" icon="lock">
+    Private access within your Tailscale network (Tailnet). Only authenticated devices can connect.
+  </Card>
+  
+  <Card title="Tailscale Funnel" icon="globe">
+    Public internet access. Anyone with the URL can connect, even without Tailscale.
+  </Card>
+</CardGroup>
+
+## Tailscale Serve
+
+**Tailscale Serve** lets you route traffic from devices **on your Tailscale network** to local services. Think of it as private sharing - only members of your Tailnet can access the service.
+
+### How Serve Works
+
+```
+┌──────────────┐       Tailnet VPN        ┌──────────────┐
+│   Your       │◄─────────────────────────►│  Tailscale   │
+│   Laptop     │     Encrypted Tunnel      │  Container   │
+│              │                            │              │
+│ Authenticated│                            │  Proxies to  │
+│ Tailscale    │                            │  127.0.0.1   │
+│ Device       │                            │              │
+└──────────────┘                            └──────┬───────┘
+                                                   │
+                                            ┌──────▼───────┐
+                                            │ Application  │
+                                            │ Container    │
+                                            └──────────────┘
+
+✓ Private: Only your Tailnet devices
+✓ Encrypted: All traffic through VPN
+✓ Authenticated: Requires Tailscale login
+```
+
+### Serve Configuration Example
+
+This is the **default configuration** for all ScaleTail services:
+
+```yaml compose.yaml
+configs:
+  ts-serve:
+    content: |
+      {"TCP":{"443":{"HTTPS":true}},
+      "Web":{"${TS_CERT_DOMAIN}:443":
+          {"Handlers":{"/":
+          {"Proxy":"http://127.0.0.1:8096"}}}},
+      "AllowFunnel":{"${TS_CERT_DOMAIN}:443":false}}  # ← false = Serve only
+```
+
+<Note>
+  The key setting is `"AllowFunnel": {"${TS_CERT_DOMAIN}:443": false}`. This explicitly disables public internet access.
+</Note>
+
+### Serve Configuration Breakdown
+
+<Tabs>
+  <Tab title="TCP Configuration">
+    ```json
+    "TCP": {
+      "443": {"HTTPS": true}
+    }
+    ```
+    
+    **Purpose**: Enable HTTPS on port 443
+    
+    - Tailscale automatically provisions TLS certificates
+    - Uses your machine's Tailscale hostname
+    - Certificates are valid only for your Tailnet
+  </Tab>
+  
+  <Tab title="Web Handler">
+    ```json
+    "Web": {
+      "jellyfin.your-tailnet.ts.net:443": {
+        "Handlers": {
+          "/": {
+            "Proxy": "http://127.0.0.1:8096"
+          }
+        }
+      }
+    }
+    ```
+    
+    **Purpose**: Define routing rules
+    
+    - `jellyfin.your-tailnet.ts.net:443`: The public Tailscale hostname
+    - `"/"`: Match all paths
+    - `"Proxy": "http://127.0.0.1:8096"`: Forward to application on port 8096
+  </Tab>
+  
+  <Tab title="Funnel Control">
+    ```json
+    "AllowFunnel": {
+      "jellyfin.your-tailnet.ts.net:443": false
+    }
+    ```
+    
+    **Purpose**: Control public access
+    
+    - `false`: Private to Tailnet (Serve)
+    - `true`: Public internet access (Funnel)
+  </Tab>
+</Tabs>
+
+### When to Use Serve
+
+Use Tailscale Serve for:
+
+<CardGroup cols={2}>
+  <Card title="Personal Media Servers" icon="film">
+    Jellyfin, Plex, Navidrome - keep your media library private to family/friends
+  </Card>
+  
+  <Card title="Admin Interfaces" icon="gauge">
+    Portainer, Dozzle, Homarr - administrative dashboards should never be public
+  </Card>
+  
+  <Card title="Internal Tools" icon="wrench">
+    Development tools, internal wikis, documentation - for team/personal use only
+  </Card>
+  
+  <Card title="Sensitive Services" icon="shield">
+    Vaultwarden, Home Assistant, file managers - anything with personal data
+  </Card>
+</CardGroup>
+
+## Tailscale Funnel
+
+**Tailscale Funnel** lets you route traffic from **the public internet** to local services. Anyone with the URL can access your service, even without Tailscale installed.
+
+### How Funnel Works
+
+```
+┌──────────────┐    Public Internet      ┌──────────────┐
+│   Random     │────────────────────────►│  Tailscale   │
+│   Internet   │   HTTPS Request         │  Proxy       │
+│   User       │                          │  (Public)    │
+│              │                          │              │
+│ No Tailscale │                          │  Forwards    │
+│ Required     │                          │  via Tailnet │
+└──────────────┘                          └──────┬───────┘
+                                                 │ Encrypted
+                                                 │ Tailnet
+                                          ┌──────▼───────┐
+                                          │  Tailscale   │
+                                          │  Container   │
+                                          │              │
+                                          │  Proxies to  │
+                                          │  127.0.0.1   │
+                                          └──────┬───────┘
+                                                 │
+                                          ┌──────▼───────┐
+                                          │ Application  │
+                                          │ Container    │
+                                          └──────────────┘
+
+⚠ Public: Anyone can access
+✓ Encrypted: HTTPS enforced
+⚠ No auth: No Tailscale login required
+```
+
+### Funnel Configuration Example
+
+To enable public internet access, set `AllowFunnel` to `true`:
+
+```yaml compose.yaml
+configs:
+  ts-serve:
+    content: |
+      {"TCP":{"443":{"HTTPS":true}},
+      "Web":{"${TS_CERT_DOMAIN}:443":
+          {"Handlers":{"/":
+          {"Proxy":"http://127.0.0.1:3000"}}}},
+      "AllowFunnel":{"${TS_CERT_DOMAIN}:443":true}}  # ← true = Public access
+```
+
+<Warning>
+  Enabling Funnel exposes your service to the **entire internet**. Ensure your application has its own authentication and security measures.
+</Warning>
+
+### When to Use Funnel
+
+Use Tailscale Funnel for:
+
+<CardGroup cols={2}>
+  <Card title="Public Websites" icon="globe">
+    Blogs, portfolios, landing pages - content meant for public consumption
+  </Card>
+  
+  <Card title="Public APIs" icon="code">
+    Webhooks, API endpoints - services that need to receive external requests
+  </Card>
+  
+  <Card title="Demo Applications" icon="presentation">
+    Sharing prototypes or demos with clients who don't have Tailscale
+  </Card>
+  
+  <Card title="Public Services" icon="share-nodes">
+    URL shorteners, paste bins - utilities meant for public use
+  </Card>
+</CardGroup>
+
+## Key Differences
+
+<Tabs>
+  <Tab title="Access Control">
+    | Feature | Serve | Funnel |
+    |---------|-------|--------|
+    | **Who can access** | Only Tailnet members | Anyone on the internet |
+    | **Authentication** | Tailscale login required | No authentication |
+    | **Network** | Private VPN only | Public internet + VPN |
+    | **Device requirement** | Must have Tailscale installed | No Tailscale needed |
+  </Tab>
+  
+  <Tab title="Security">
+    | Feature | Serve | Funnel |
+    |---------|-------|--------|
+    | **Encryption** | End-to-end via Tailscale | HTTPS (Tailscale terminates TLS) |
+    | **ACL support** | Yes - use Tailscale ACLs | No - public access |
+    | **DDoS protection** | Inherent - limited to Tailnet | Requires application-level protection |
+    | **Rate limiting** | Not typically needed | Recommended |
+  </Tab>
+  
+  <Tab title="Use Cases">
+    | Scenario | Serve | Funnel |
+    |----------|-------|--------|
+    | Personal media server | ✅ Recommended | ❌ Risky |
+    | Admin dashboard | ✅ Required | ❌ Dangerous |
+    | Public blog | ❌ Too restrictive | ✅ Perfect |
+    | Family photo sharing | ✅ Private | ⚠️ Only with app auth |
+    | API webhooks | ❌ External services can't reach | ✅ Required |
+    | Development preview | ⚠️ Requires Tailscale install | ✅ Easy sharing |
+  </Tab>
+  
+  <Tab title="Configuration">
+    **Serve Configuration**
+    ```json
+    {
+      "TCP": {"443": {"HTTPS": true}},
+      "Web": {
+        "service.tailnet.ts.net:443": {
+          "Handlers": {
+            "/": {"Proxy": "http://127.0.0.1:8096"}
+          }
+        }
+      },
+      "AllowFunnel": {
+        "service.tailnet.ts.net:443": false  # Private
+      }
+    }
+    ```
+    
+    **Funnel Configuration**
+    ```json
+    {
+      "TCP": {"443": {"HTTPS": true}},
+      "Web": {
+        "service.tailnet.ts.net:443": {
+          "Handlers": {
+            "/": {"Proxy": "http://127.0.0.1:3000"}
+          }
+        }
+      },
+      "AllowFunnel": {
+        "service.tailnet.ts.net:443": true  # Public
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Migration Between Serve and Funnel
+
+Switching between Serve and Funnel is simple - just modify the `AllowFunnel` setting.
+
+### Making a Service Public (Serve → Funnel)
+
+<Steps>
+  <Step title="Edit serve.json Configuration">
+    Modify your `compose.yaml` to enable Funnel:
+    
+    ```yaml
+    configs:
+      ts-serve:
+        content: |
+          {"TCP":{"443":{"HTTPS":true}},
+          "Web":{"${TS_CERT_DOMAIN}:443":
+              {"Handlers":{"/":
+              {"Proxy":"http://127.0.0.1:3000"}}}},
+          "AllowFunnel":{"${TS_CERT_DOMAIN}:443":true}}  # Changed to true
+    ```
+  </Step>
+  
+  <Step title="Enable Funnel in Tailscale Admin">
+    Funnel must be enabled for your Tailnet:
+    
+    1. Go to [Tailscale Admin Console](https://login.tailscale.com/admin/settings/general)
+    2. Navigate to **Settings** > **General**
+    3. Enable **Funnel**
+  </Step>
+  
+  <Step title="Restart Services">
+    Apply the configuration changes:
+    
+    ```bash
+    docker compose down
+    docker compose up -d
+    ```
+  </Step>
+  
+  <Step title="Verify Public Access">
+    Test access from a device **without** Tailscale:
+    
+    ```bash
+    curl https://your-service.your-tailnet.ts.net
+    ```
+  </Step>
+</Steps>
+
+### Making a Service Private (Funnel → Serve)
+
+<Steps>
+  <Step title="Edit serve.json Configuration">
+    Modify your `compose.yaml` to disable Funnel:
+    
+    ```yaml
+    configs:
+      ts-serve:
+        content: |
+          {"TCP":{"443":{"HTTPS":true}},
+          "Web":{"${TS_CERT_DOMAIN}:443":
+              {"Handlers":{"/":
+              {"Proxy":"http://127.0.0.1:8096"}}}},
+          "AllowFunnel":{"${TS_CERT_DOMAIN}:443":false}}  # Changed to false
+    ```
+  </Step>
+  
+  <Step title="Restart Services">
+    Apply the configuration:
+    
+    ```bash
+    docker compose down
+    docker compose up -d
+    ```
+  </Step>
+  
+  <Step title="Verify Private Access">
+    Confirm public access is blocked:
+    
+    ```bash
+    # From non-Tailscale device - should fail
+    curl https://your-service.your-tailnet.ts.net
+    
+    # From Tailscale device - should work
+    curl https://your-service.your-tailnet.ts.net
+    ```
+  </Step>
+</Steps>
+
+## Advanced Configurations
+
+### Path-Based Routing
+
+Expose different paths with different access levels:
+
+```json
+{
+  "TCP": {"443": {"HTTPS": true}},
+  "Web": {
+    "app.tailnet.ts.net:443": {
+      "Handlers": {
+        "/": {
+          "Proxy": "http://127.0.0.1:3000"  # Main app - private
+        },
+        "/api/public": {
+          "Proxy": "http://127.0.0.1:3000"  # API - could be public
+        }
+      }
+    }
+  },
+  "AllowFunnel": {
+    "app.tailnet.ts.net:443": false  # Whole service private
+  }
+}
+```
+
+<Note>
+  Path-based access control is handled at the application level. Funnel is an all-or-nothing setting per domain.
+</Note>
+
+### Multiple Services with Different Access
+
+Run multiple services with different Serve/Funnel configurations:
+
+```yaml
+services:
+  # Private admin dashboard
+  tailscale-admin:
+    environment:
+      - TS_SERVE_CONFIG=/config/serve-private.json
+    configs:
+      - source: ts-serve-private
+        target: /config/serve-private.json
+  
+  # Public blog
+  tailscale-blog:
+    environment:
+      - TS_SERVE_CONFIG=/config/serve-public.json
+    configs:
+      - source: ts-serve-public
+        target: /config/serve-public.json
+
+configs:
+  ts-serve-private:
+    content: |
+      {"AllowFunnel":{"admin.tailnet.ts.net:443":false}}
+  
+  ts-serve-public:
+    content: |
+      {"AllowFunnel":{"blog.tailnet.ts.net:443":true}}
+```
+
+## Security Considerations
+
+<AccordionGroup>
+  <Accordion title="Serve Security">
+    **Strengths**:
+    - ✅ Automatic authentication via Tailscale
+    - ✅ End-to-end encryption
+    - ✅ ACL support for fine-grained access
+    - ✅ No exposure to internet threats
+    
+    **Considerations**:
+    - ⚠️ All Tailnet members can access unless ACLs restrict
+    - ⚠️ Compromised Tailscale credentials = compromised access
+    - ⚠️ Application-level auth still recommended for sensitive data
+  </Accordion>
+  
+  <Accordion title="Funnel Security">
+    **Strengths**:
+    - ✅ HTTPS enforced automatically
+    - ✅ Tailscale provides DDoS mitigation
+    - ✅ Valid TLS certificates included
+    
+    **Risks**:
+    - ⚠️ **No authentication** - anyone with the URL can access
+    - ⚠️ **Attack surface** - exposed to all internet threats
+    - ⚠️ **Application vulnerabilities** - your app must handle all security
+    - ⚠️ **Rate limiting** - must be handled at application level
+    
+    **Required Mitigations**:
+    - Implement application-level authentication
+    - Add rate limiting and DDoS protection
+    - Regular security updates
+    - Monitor logs for suspicious activity
+    - Use Web Application Firewall (WAF) if possible
+  </Accordion>
+  
+  <Accordion title="Hybrid Approach">
+    For maximum security with public access:
+    
+    1. **Use Funnel** for public accessibility
+    2. **Add authentication** at the application level (OAuth, password, etc.)
+    3. **Implement rate limiting** to prevent abuse
+    4. **Monitor access logs** for suspicious activity
+    5. **Keep software updated** to patch vulnerabilities
+    
+    Example: A public blog with admin panel
+    ```json
+    {
+      "AllowFunnel": {"blog.tailnet.ts.net:443": true},
+      "Web": {
+        "blog.tailnet.ts.net:443": {
+          "Handlers": {
+            "/": {"Proxy": "http://127.0.0.1:2368"},  # Public
+            "/ghost": {"Proxy": "http://127.0.0.1:2368"}  # Requires app login
+          }
+        }
+      }
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Common Scenarios
+
+### Scenario 1: Family Media Server
+
+**Goal**: Share Jellyfin with family members only
+
+**Solution**: Use **Serve**
+
+```yaml
+configs:
+  ts-serve:
+    content: |
+      {"TCP":{"443":{"HTTPS":true}},
+      "Web":{"jellyfin.family-tailnet.ts.net:443":
+          {"Handlers":{"/":{"Proxy":"http://127.0.0.1:8096"}}}},
+      "AllowFunnel":{"jellyfin.family-tailnet.ts.net:443":false}}
+```
+
+**Why**: 
+- Family members install Tailscale
+- Automatic authentication
+- No exposure to internet
+- Safe for personal media
+
+### Scenario 2: Public Portfolio Website
+
+**Goal**: Share your portfolio with potential employers
+
+**Solution**: Use **Funnel**
+
+```yaml
+configs:
+  ts-serve:
+    content: |
+      {"TCP":{"443":{"HTTPS":true}},
+      "Web":{"portfolio.your-tailnet.ts.net:443":
+          {"Handlers":{"/":{"Proxy":"http://127.0.0.1:3000"}}}},
+      "AllowFunnel":{"portfolio.your-tailnet.ts.net:443":true}}
+```
+
+**Why**:
+- No Tailscale installation required for viewers
+- Public accessibility
+- Professional presence
+- Static content = low security risk
+
+### Scenario 3: Development Team Tool
+
+**Goal**: Internal wiki for 5-person team
+
+**Solution**: Use **Serve** with ACLs
+
+```yaml
+configs:
+  ts-serve:
+    content: |
+      {"TCP":{"443":{"HTTPS":true}},
+      "Web":{"wiki.company-tailnet.ts.net:443":
+          {"Handlers":{"/":{"Proxy":"http://127.0.0.1:3000"}}}},
+      "AllowFunnel":{"wiki.company-tailnet.ts.net:443":false}}
+```
+
+**Tailscale ACL**:
+```json
+{
+  "acls": [
+    {
+      "action": "accept",
+      "src": ["group:engineering"],
+      "dst": ["tag:wiki:*"]
+    }
+  ]
+}
+```
+
+**Why**:
+- Team already uses Tailscale
+- Fine-grained access control via ACLs
+- Secure by default
+- Easy onboarding/offboarding
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Funnel not working after enabling">
+    **Symptoms**: Public access still blocked after setting `AllowFunnel: true`
+    
+    **Solutions**:
+    1. Verify Funnel is enabled in [Tailscale Admin](https://login.tailscale.com/admin/settings/general)
+    2. Check device has Funnel permissions in ACLs
+    3. Restart Tailscale container: `docker compose restart tailscale`
+    4. Check Tailscale logs: `docker compose logs tailscale`
+    5. Test with: `tailscale serve status` (exec into container)
+  </Accordion>
+  
+  <Accordion title="Serve accessible from public internet">
+    **Symptoms**: Service accessible without Tailscale despite `AllowFunnel: false`
+    
+    **Solutions**:
+    1. Verify no port forwarding in router to the service
+    2. Check no `ports:` directive exposing service publicly
+    3. Confirm `AllowFunnel` is actually `false` in config
+    4. Review firewall rules on host machine
+  </Accordion>
+  
+  <Accordion title="Connection works on Tailscale but not public internet">
+    **Symptoms**: Service works with Serve but Funnel shows errors
+    
+    **Solutions**:
+    1. Verify Funnel is enabled for your Tailnet
+    2. Check application listens on 127.0.0.1 or 0.0.0.0 (not just localhost)
+    3. Review application logs for errors
+    4. Test internal access: `curl http://127.0.0.1:8096` from Tailscale container
+  </Accordion>
+</AccordionGroup>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Default to Serve" icon="lock">
+    Always start with Serve (private). Only enable Funnel when public access is explicitly required.
+  </Card>
+  
+  <Card title="Defense in Depth" icon="shield">
+    Even with Serve, implement application-level authentication for sensitive services.
+  </Card>
+  
+  <Card title="Monitor Access" icon="chart-line">
+    For Funnel services, monitor access logs and set up alerts for suspicious activity.
+  </Card>
+  
+  <Card title="Use ACLs" icon="list-check">
+    With Serve, use Tailscale ACLs to restrict which Tailnet members can access specific services.
+  </Card>
+  
+  <Card title="Document Decisions" icon="file-lines">
+    Comment in your compose.yaml why each service uses Serve or Funnel.
+  </Card>
+  
+  <Card title="Regular Audits" icon="magnifying-glass">
+    Periodically review which services are public and confirm they should remain so.
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Environment Variables" icon="code" href="/configuration/environment-variables">
+    Complete reference for configuring Tailscale behavior
+  </Card>
+  
+  <Card title="Sidecar Pattern" icon="layer-group" href="/configuration/sidecar-pattern">
+    Deep dive into the Docker sidecar architecture
+  </Card>
+  
+  <Card title="Tailscale Setup" icon="key" href="/configuration/tailscale-setup">
+    Configure authentication and manage your Tailnet
+  </Card>
+  
+  <Card title="Deploy Services" icon="rocket" href="/quickstart">
+    Start deploying with Serve or Funnel
+  </Card>
+</CardGroup>

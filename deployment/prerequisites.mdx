@@ -1,0 +1,190 @@
+---
+title: Prerequisites
+description: System requirements and prerequisites for deploying ScaleTail services
+---
+
+Before deploying ScaleTail services, ensure your system meets these requirements and you have the necessary accounts and tools configured.
+
+## System requirements
+
+<CardGroup cols={2}>
+  <Card title="Docker Engine" icon="docker">
+    Docker 20.10 or later with Docker Compose V2
+  </Card>
+  <Card title="Operating system" icon="server">
+    Linux, macOS, or Windows with WSL2
+  </Card>
+  <Card title="Memory" icon="memory">
+    Minimum 2GB RAM, 4GB+ recommended
+  </Card>
+  <Card title="Storage" icon="hard-drive">
+    At least 10GB free space per service
+  </Card>
+</CardGroup>
+
+## Required accounts
+
+### Tailscale account
+
+You need a Tailscale account to generate auth keys and manage your Tailnet.
+
+<Steps>
+  <Step title="Create a Tailscale account">
+    Sign up at [tailscale.com](https://tailscale.com) if you don't have an account.
+  </Step>
+  
+  <Step title="Access the admin console">
+    Navigate to the [Tailscale admin console](https://login.tailscale.com/admin/settings/keys).
+  </Step>
+  
+  <Step title="Generate an auth key">
+    Create a new auth key with the **Reusable** option enabled for deploying multiple services.
+    
+    <Warning>
+      Keep your auth key secure. Anyone with access to this key can add devices to your Tailnet.
+    </Warning>
+  </Step>
+</Steps>
+
+## Docker installation
+
+### Linux
+
+```bash
+# Install Docker Engine
+curl -fsSL https://get.docker.com -o get-docker.sh
+sudo sh get-docker.sh
+
+# Add your user to the docker group
+sudo usermod -aG docker $USER
+
+# Log out and back in for group changes to take effect
+```
+
+### macOS
+
+Install [Docker Desktop for Mac](https://docs.docker.com/desktop/install/mac-install/) from the official Docker website.
+
+### Windows
+
+Install [Docker Desktop for Windows](https://docs.docker.com/desktop/install/windows-install/) with WSL2 backend.
+
+<Info>
+  After installation, verify Docker is running with `docker --version` and `docker compose version`.
+</Info>
+
+## User permissions
+
+Your user account must have proper permissions to run Docker containers and access required devices.
+
+### Docker group membership
+
+```bash
+# Verify you're in the docker group
+groups $USER
+
+# If not, add yourself
+sudo usermod -aG docker $USER
+```
+
+### Additional group requirements
+
+Some services require additional group memberships:
+
+| Service Type | Required Group | Reason |
+|--------------|----------------|--------|
+| Media servers with GPU | `video`, `render` | Hardware acceleration access |
+| Services using `/dev/fuse` | `fuse` | FUSE filesystem support |
+| Network monitoring | `netdev` | Network device access |
+
+```bash
+# Add yourself to required groups
+sudo usermod -aG video,render $USER
+```
+
+## Network requirements
+
+<Note>
+  ScaleTail uses Tailscale's overlay network, so you don't need to configure port forwarding on your router.
+</Note>
+
+### Firewall considerations
+
+- **Outbound HTTPS (443)**: Required for Tailscale coordination server
+- **UDP 41641**: Tailscale's default DERP relay port (optional, for NAT traversal)
+- **Local network access**: Only needed if you want services accessible via LAN
+
+### Tailscale DERP regions
+
+Tailscale uses DERP (Designated Encrypted Relay for Packets) servers for NAT traversal. No configuration is needed—Tailscale automatically selects the best region.
+
+## Directory structure
+
+Create a dedicated directory for ScaleTail services:
+
+```bash
+# Create a base directory
+mkdir -p ~/scaletail
+cd ~/scaletail
+
+# Clone the repository
+git clone https://github.com/tailscale-dev/ScaleTail.git
+cd ScaleTail
+```
+
+### Volume mount permissions
+
+<Warning>
+  Pre-create volume mount directories to avoid Docker creating them as root-owned.
+</Warning>
+
+```bash
+# Example: Create directories for Jellyfin
+cd services/jellyfin
+mkdir -p jellyfin-data/config media/movies media/tvseries
+
+# Set proper ownership
+chown -R $USER:$USER jellyfin-data media
+```
+
+## Environment preparation
+
+### Git installed
+
+```bash
+# Verify git is installed
+git --version
+
+# Install if needed (Ubuntu/Debian)
+sudo apt update && sudo apt install git
+```
+
+### Text editor
+
+You'll need a text editor to create `.env` files:
+
+- Command line: `nano`, `vim`, or `emacs`
+- GUI: VS Code, Sublime Text, or any text editor
+
+## Validation checklist
+
+Before proceeding to deployment, verify:
+
+- [ ] Docker Engine is installed and running
+- [ ] Docker Compose V2 is available (`docker compose version`)
+- [ ] You're a member of the `docker` group
+- [ ] Tailscale account is created
+- [ ] Tailscale auth key is generated and saved securely
+- [ ] ScaleTail repository is cloned
+- [ ] Required directories are created with proper permissions
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Docker Compose guide" icon="docker" href="/deployment/docker-compose">
+    Learn how to deploy services with Docker Compose
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Deploy your first service in minutes
+  </Card>
+</CardGroup>

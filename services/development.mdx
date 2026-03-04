@@ -1,0 +1,140 @@
+---
+title: 'Development Tools'
+description: 'Developer tools, Docker management, and infrastructure utilities'
+icon: 'code'
+---
+
+## Overview
+
+This category includes 14 development tools and utilities for developers, sysadmins, and DevOps engineers. From Docker management interfaces to development environments and infrastructure diagrams, these services streamline your development workflow.
+
+## Available Services
+
+| Service | Description |
+| ------- | ----------- |
+| **Arcane** | A self-hosted Docker management UI for Compose stacks; this repo includes a Tailscale sidecar example |
+| **Changedetection.io** | A tool for monitoring website changes |
+| **Coder** | Self-hosted cloud dev environments with browser IDEs, Terraform-managed workspaces |
+| **Cyberchef** | A web app for encryption, encoding, compression, and data analysis |
+| **Dockhand** | A modern, lightweight Docker management UI for containers and Compose stacks |
+| **Dozzle** | A real-time log viewer for Docker containers |
+| **FossFLOW** | A self-hosted tool to make beautiful isometric infrastructure diagrams |
+| **GitSave** | A self-hosted service to back up your GitHub repositories via a simple REST API and scheduled runs |
+| **Gokapi** | A lightweight self-hosted file sharing platform |
+| **Homarr** | A sleek dashboard for all your Homelab services |
+| **IT-Tools** | A collection of handy online tools for developers and sysadmins |
+| **Node-RED** | A flow-based development tool for visual programming |
+| **Portainer** | A lightweight management UI which allows you to easily manage your Docker environments |
+| **searXNG** | A free internet metasearch engine which aggregates results from various search services |
+
+## Featured Services
+
+<CardGroup cols={2}>
+  <Card title="Portainer" icon="docker" href="https://github.com/tailscale-dev/ScaleTail/tree/main/services/portainer">
+    The most popular Docker management UI
+  </Card>
+  <Card title="Dozzle" icon="terminal" href="https://github.com/tailscale-dev/ScaleTail/tree/main/services/dozzle">
+    Real-time Docker container log viewer
+  </Card>
+  <Card title="Coder" icon="laptop-code" href="https://github.com/tailscale-dev/ScaleTail/tree/main/services/coder">
+    Cloud development environments in your browser
+  </Card>
+  <Card title="Node-RED" icon="diagram-project" href="https://github.com/tailscale-dev/ScaleTail/tree/main/services/nodered">
+    Visual programming for IoT and automation
+  </Card>
+</CardGroup>
+
+## Quick Setup Example
+
+### Portainer
+
+Portainer is the most popular Docker management interface:
+
+```yaml
+services:
+  portainer:
+    image: portainer/portainer-ce:latest
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./portainer-data:/data
+
+  tailscale:
+    image: tailscale/tailscale:latest
+    environment:
+      - TS_AUTHKEY=tskey-auth-xxxxx
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_SERVE_CONFIG=/config/serve-config.json
+    volumes:
+      - ./ts-state:/var/lib/tailscale
+      - ./serve-config.json:/config/serve-config.json
+```
+
+<Tip>
+Access Portainer at port 9000 via your Tailscale network. The first login will prompt you to create an admin account.
+</Tip>
+
+### Dozzle
+
+Dozzle provides real-time Docker container logs in your browser:
+
+```yaml
+services:
+  dozzle:
+    image: amir20/dozzle:latest
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  tailscale:
+    image: tailscale/tailscale:latest
+    environment:
+      - TS_AUTHKEY=tskey-auth-xxxxx
+      - TS_STATE_DIR=/var/lib/tailscale
+    volumes:
+      - ./ts-state:/var/lib/tailscale
+```
+
+## Popular Combinations
+
+<AccordionGroup>
+  <Accordion title="Docker Management Stack">
+    - **Portainer** for container and stack management
+    - **Dozzle** for real-time log viewing
+    - **Dockhand** or **Arcane** as lightweight alternatives
+  </Accordion>
+
+  <Accordion title="Development Environment">
+    - **Coder** for cloud development workspaces
+    - **GitSave** for backing up repositories
+    - **IT-Tools** for developer utilities
+  </Accordion>
+
+  <Accordion title="Monitoring & Automation">
+    - **Changedetection.io** for website monitoring
+    - **Node-RED** for automation workflows
+    - **Homarr** for service dashboards
+  </Accordion>
+</AccordionGroup>
+
+## Use Cases
+
+- **Docker management** with Portainer, Dockhand, or Arcane
+- **Container log viewing** with Dozzle
+- **Cloud development** with Coder
+- **Repository backups** with GitSave
+- **Website monitoring** with Changedetection.io
+- **Visual automation** with Node-RED
+- **Infrastructure diagrams** with FossFLOW
+- **Service dashboards** with Homarr
+- **Developer utilities** with IT-Tools or Cyberchef
+- **Private search** with searXNG
+- **File sharing** with Gokapi
+
+## Links
+
+All service configurations are available in the [ScaleTail GitHub repository](https://github.com/tailscale-dev/ScaleTail/tree/main/services).
